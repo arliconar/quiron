@@ -30,6 +30,14 @@ SYSTEM_PROMPT = (
     "Texto a analizar:"
 )
 
+DOCTOR_PROMPT = (
+    "Eres un Doctor en Mecatrónica evaluando una memoria de estadía (reporte de prácticas profesionales). "
+    "Tu tarea es revisar rigurosamente el contenido técnico, la estructura, la coherencia y la profundidad del trabajo. "
+    "Crea un reporte con correcciones y sugerencias acerca del contenido. "
+    "Para cada observación, incluye (si es posible): el capítulo, la hoja/página, el texto original al que haces referencia, y la mejora sugerida. "
+    "Tu respuesta debe estar en texto claro, estructurado y profesional."
+)
+
 def get_gemini_js_path() -> str:
     """
     Intenta localizar el archivo de bundle de JavaScript de gemini-cli ('gemini.js')
@@ -123,6 +131,43 @@ def run_gemini_cli(text_content: str) -> list:
         print(f"Ocurrió un error inesperado al invocar gemini-cli: {e}", file=sys.stderr)
         
     return []
+
+def run_gemini_content_review(text_content: str) -> str:
+    """
+    Ejecuta gemini-cli para una revisión de contenido técnico usando el DOCTOR_PROMPT.
+    """
+    try:
+        js_path = get_gemini_js_path()
+        
+        cmd = [
+            "node",
+            js_path,
+            "-p",
+            DOCTOR_PROMPT,
+            "-o",
+            "json"
+        ]
+        
+        result = subprocess.run(
+            cmd,
+            input=text_content,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="ignore"
+        )
+        
+        if result.returncode != 0:
+            print(f"Error al ejecutar gemini-cli (revisión de contenido):\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}", file=sys.stderr)
+            return ""
+            
+        cli_output = json.loads(result.stdout)
+        return cli_output.get("response", "").strip()
+            
+    except Exception as e:
+        print(f"Ocurrió un error inesperado al invocar gemini-cli para revisión: {e}", file=sys.stderr)
+        
+    return ""
 
 def find_text_bounds(page, target: str) -> list:
     """
@@ -248,6 +293,29 @@ def corregir_reporte_pdf(input_path: str, output_path: str):
                 highlight.update()
                 total_anotaciones_creadas += 1
                 
+    # --- REVISIÓN DE CONTENIDO (DOCTOR EN MECATRÓNICA) ---
+    print("\n--- Iniciando revisión de contenido técnico (Doctor en Mecatrónica) ---")
+    all_text_with_pages = []
+    for page_num in range(total_paginas):
+        text_content = doc[page_num].get_text("text").strip()
+        if text_content:
+            all_text_with_pages.append(f"--- PÁGINA {page_num + 1} ---\n{text_content}")
+            
+    full_text = "\n\n".join(all_text_with_pages)
+    
+    print("Enviando el documento completo para revisión de contenido (esto puede tardar unos momentos)...")
+    revision_contenido = run_gemini_content_review(full_text)
+    
+    txt_output_path = ""
+    if revision_contenido:
+        base, _ = os.path.splitext(input_path)
+        txt_output_path = f"{base}_revision_contenido.txt"
+        with open(txt_output_path, "w", encoding="utf-8") as f:
+            f.write(revision_contenido)
+        print(f"Revisión de contenido guardada exitosamente en: {txt_output_path}")
+    else:
+        print("No se pudo obtener la revisión de contenido.")
+
     # Guardar el PDF copia con las anotaciones
     print(f"\nGuardando PDF corregido en: {output_path}...")
     doc.save(output_path)
@@ -257,6 +325,8 @@ def corregir_reporte_pdf(input_path: str, output_path: str):
     print("PROCESO TERMINADO EXITOSAMENTE")
     print(f"Archivo original: {input_path}")
     print(f"Copia comentada:  {output_path}")
+    if txt_output_path:
+        print(f"Revisión de contenido: {txt_output_path}")
     print(f"Errores únicos detectados: {total_errores_detectados}")
     print(f"Anotaciones agregadas en PDF: {total_anotaciones_creadas}")
     print("==================================================")
