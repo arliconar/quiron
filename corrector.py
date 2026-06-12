@@ -5,6 +5,7 @@ import re
 import argparse
 import subprocess
 import pymupdf
+import concurrent.futures
 
 # Configuración del Prompt del Sistema para Gemini
 SYSTEM_PROMPT = (
@@ -207,7 +208,7 @@ def find_text_bounds(page, target: str) -> list:
         
     return rects
 
-def corregir_reporte_pdf(input_path: str, output_path: str):
+def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10):
     """
     Abre el PDF de entrada, analiza errores por página usando antigravity-cli (sin repetir errores globales),
     agrega anotaciones al PDF copia y guarda el resultado.
@@ -226,27 +227,45 @@ def corregir_reporte_pdf(input_path: str, output_path: str):
     total_errores_detectados = 0
     total_anotaciones_creadas = 0
     
-    # Iterar sobre cada página
+    # Guardamos el texto completo para el final
+    print("Extrayendo texto de todas las páginas...")
+    all_pages_text = []
+    for page_num in range(total_paginas):
+        page_text = doc[page_num].get_text("text").strip()
+        if page_text:
+            all_pages_text.append(f"--- PÁGINA {page_num + 1} ---\n{page_text}")
+    full_text = "\n\n".join(all_pages_text)
+    
+    # Diccionario para guardar los errores detectados por página
+    page_errors = {}
+    
+    def procesar_pagina(page_index: int):
+        page_text = doc[page_index].get_text("text").strip()
+        if not page_text:
+            return page_index, []
+        print(f"Lanzando revisión de Página {page_index + 1}...")
+        errs = run_antigravity_cli(page_text, page_index + 1)
+        return page_index, errs
+
+    print(f"\n--- Analizando ortografía en paralelo ({num_agents} instancias) ---")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=num_agents) as executor:
+        futures = {executor.submit(procesar_pagina, i): i for i in range(total_paginas)}
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                page_index, errs = future.result()
+                page_errors[page_index] = errs
+                print(f"✓ Página {page_index + 1} completada ({len(errs)} errores).")
+            except Exception as exc:
+                print(f"La página generó una excepción: {exc}", file=sys.stderr)
+
+    print("\n--- Aplicando anotaciones al PDF ---")
     for page_num in range(total_paginas):
         page = doc[page_num]
-        print(f"\n--- Procesando Página {page_num + 1}/{total_paginas} ---")
-        
-        # Extraer el texto de la página
-        text_content = page.get_text("text").strip()
-        if not text_content:
-            print("Página vacía o sin texto extraíble. Omitiendo.")
-            continue
-            
-        print("Enviando texto a Antigravity...")
-        errors = run_antigravity_cli(text_content, page_num + 1)
+        errors = page_errors.get(page_num, [])
         
         if not errors:
-            print("No se encontraron errores en esta página (o la respuesta fue vacía).")
             continue
             
-        print(f"Antigravity reportó {len(errors)} posibles errores.")
-        
-        # Procesar cada error reportado
         for err in errors:
             original = err.get("original", "").strip()
             corregido = err.get("corregido", "").strip()
@@ -260,7 +279,7 @@ def corregir_reporte_pdf(input_path: str, output_path: str):
             
             # --- EVITAR REPETIR ERRORES (REQUERIMIENTO CLAVE) ---
             if err_key in seen_errors_global:
-                print(f"  [DEDUPLICADO] Se omitió el error '{original}' porque ya fue marcado anteriormente.")
+                print(f"  [DEDUPLICADO Pág {page_num + 1}] Se omitió el error '{original}' porque ya fue marcado anteriormente.")
                 continue
                 
             seen_errors_global.add(err_key)
@@ -270,44 +289,29 @@ def corregir_reporte_pdf(input_path: str, output_path: str):
             rects = find_text_bounds(page, original)
             
             if not rects:
-                # Si falló, intentar buscar sin case-sensitivity o con ligeras modificaciones
-                # (a veces Antigravity devuelve la palabra con su corrección o sin un acento del original)
-                print(f"  [AVISO] No se encontraron coordenadas exactas para la palabra '{original}' en el PDF.")
+                print(f"  [AVISO Pág {page_num + 1}] No se encontraron coordenadas exactas para la palabra '{original}' en el PDF.")
                 continue
                 
-            # Crear anotaciones de resaltado con comentario
-            print(f"  [ERROR] '{original}' -> '{corregido}' ({tipo})")
+            print(f"  [ERROR Pág {page_num + 1}] '{original}' -> '{corregido}' ({tipo})")
             
-            # Resaltar todas las instancias encontradas en esta página
             for rect in rects:
                 highlight = page.add_highlight_annot(rect)
-                
-                # Configurar el popup/comentario de la anotación
                 contenido_comentario = (
                     f"Tipo: {tipo.capitalize()}\n"
                     f"Corrección sugerida: {corregido}\n"
                     f"Detalle: {explicacion}"
                 )
-                
-                # Actualizar metadatos del comentario usando set_info de PyMuPDF
                 highlight.set_info(
                     title="Quirón",
                     subject=f"Error de {tipo}",
                     content=contenido_comentario
                 )
-                highlight.set_colors(stroke=(1.0, 0.8, 0.0))  # Color amarillo brillante para resaltar
+                highlight.set_colors(stroke=(1.0, 0.8, 0.0))
                 highlight.update()
                 total_anotaciones_creadas += 1
-                
+
     # --- REVISIÓN DE CONTENIDO (DOCTOR EN MECATRÓNICA) ---
     print("\n--- Iniciando revisión de contenido técnico (Doctor en Mecatrónica) ---")
-    all_text_with_pages = []
-    for page_num in range(total_paginas):
-        text_content = doc[page_num].get_text("text").strip()
-        if text_content:
-            all_text_with_pages.append(f"--- PÁGINA {page_num + 1} ---\n{text_content}")
-            
-    full_text = "\n\n".join(all_text_with_pages)
     
     print("Enviando el documento completo para revisión de contenido (esto puede tardar unos momentos)...")
     revision_contenido = run_antigravity_content_review(full_text)
@@ -356,6 +360,12 @@ def main():
         "-o", "--output",
         help="Ruta donde se guardará el PDF corregido. Por defecto sobrescribe el archivo original."
     )
+    parser.add_argument(
+        "-a", "--agents",
+        type=int,
+        default=10,
+        help="Número de agentes (hilos) a ejecutar en paralelo. Por defecto es 10."
+    )
     
     args = parser.parse_args()
     
@@ -367,7 +377,7 @@ def main():
         # Sobrescribir el archivo original
         output_path = input_path
         
-    corregir_reporte_pdf(input_path, output_path)
+    corregir_reporte_pdf(input_path, output_path, args.agents)
 
 if __name__ == "__main__":
     main()
