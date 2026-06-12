@@ -2,7 +2,8 @@ name: Build Executables
 
 on:
   push:
-    branches: [ "main", "master" ]
+    tags:
+      - "v*.*.*" # Se ejecutará al subir un tag como v1.0.0
   workflow_dispatch: # Permite ejecutar el flujo manualmente desde la web de GitHub
 
 jobs:
@@ -31,8 +32,18 @@ jobs:
     - name: Build with PyInstaller
       run: pyinstaller --noconsole --onefile gui.py
       
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
+    - name: Rename Executable (Windows)
+      if: matrix.os == 'windows-latest'
+      run: mv dist/gui.exe dist/Quiron-Windows.exe
+      
+    - name: Rename Executable (Linux/Mac)
+      if: matrix.os != 'windows-latest'
+      run: mv dist/gui dist/Quiron-${{ runner.os }}
+      
+    - name: Publish Release
+      uses: softprops/action-gh-release@v2
+      if: startsWith(github.ref, 'refs/tags/')
       with:
-        name: Quiron-${{ runner.os }}
-        path: dist/*
+        files: dist/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
