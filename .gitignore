@@ -2,3 +2,8 @@
 *.txt
 !requirements.txt
 *.json
+
+# PyInstaller / Build
+build/
+dist/
+*.spec
