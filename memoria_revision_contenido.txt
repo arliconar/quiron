@@ -1,0 +1,181 @@
+# REPORTE DE EVALUACIÓN DE MEMORIA TÉCNICA DE ESTADÍA
+**Evaluador:** Dr. en Mecatrónica / Comité de Evaluación Académica  
+**Fecha de Evaluación:** 9 de junio de 2026  
+**Título del Trabajo:** Propuesta de cambio de arranque para el motor de un compresor  
+**Autor:** Peralta Quezada Orlando David  
+**Asesores:** Dr. Ángel Ricardo Licona Rodríguez, Ing. Hugo Adrián Sagahón Cortés  
+**Grado a Obtener:** Ingeniero en Mecatrónica  
+
+---
+
+## 1. Dictamen General
+El presente trabajo aborda una problemática de alto impacto y relevancia en la industria moderna: la optimización de los sistemas de arranque de motores trifásicos de gran potencia (160 kW / 220 HP) en compresores de aire de tornillo rotativo, con la finalidad de mitigar picos de corriente, reducir el consumo de energía y lograr un mejor control del caudal. La temática es pertinente y engloba elementos clave del perfil de un Ingeniero en Mecatrónica, combinando control automático, electrónica de potencia y sistemas de fluidos.
+
+Sin embargo, tras una revisión exhaustiva y con el rigor científico y técnico exigible a nivel de posgrado y titulación profesional, se han identificado **errores conceptuales críticos de ingeniería eléctrica**, **inconsistencias graves en la parametrización propuesta para el Variador de Frecuencia (VFD)**, **fallos de física básica y matemáticas**, así como **omisiones severas en el diseño de seguridad e integración ambiental**.
+
+**El trabajo NO se considera apto para aprobación ni implementación física en su estado actual.** Se requiere que el sustentante atienda y solvente de manera rigurosa y obligatoria cada una de las observaciones críticas detalladas a continuación.
+
+---
+
+## 2. Observaciones Críticas y Correcciones Técnicas
+
+### 2.1. Inversión Conceptual Crítica en la Operación Estrella-Delta
+* **Capítulo:** 3. DESARROLLO DE ACTIVIDADES (Sección 3.2.2 y 3.2.3)
+* **Página / Líneas:** Página 19 / Líneas 603-605 y Página 20 / Líneas 620-628
+* **Texto Original:**
+  > "...las cuales activan primeramente a KM2, para luego activar la configuración Delta y después de unos segundos cambiar a estrella, dichas configuraciones se mencionaban anteriormente..."
+  > "...KM1: Aquí el controlador lo maneja como una salida dedicada al accionamiento de la configuración Delta, permitiendo un arranque suave... KM3: Finalmente, se tiene el último contactor, este permite accionar la configuración estrella, la cual permite trabajar de mejor manera y ya con carga al motor..."
+* **Análisis Técnico-Mecatrónico:**
+  Este es un error conceptual inaceptable para un Ingeniero en Mecatrónica. En un arrancador Estrella-Delta, el motor **siempre inicia su marcha en conexión Estrella (Y)**, aplicando a los bobinados una tensión reducida de $V_{línea}/\sqrt{3}$ (aprox. 58%), lo que reduce el torque y la corriente de arranque a 1/3 (33%) en comparación con el arranque directo. Al transcurrir el tiempo de aceleración inicial (rango de 70% a 90% de velocidad nominal), se realiza la permutación a la **conexión Delta ($\Delta$)**, donde el motor ya queda conectado a su tensión de red nominal para operar con carga permanente.
+  El texto afirma exactamente lo opuesto: que el arranque inicia en Delta y cambia a Estrella para el trabajo en régimen permanente bajo carga. Si el compresor operara bajo carga en Estrella de forma sostenida, la falta de torque provocaría un alto deslizamiento y un incremento de corriente que dañaría térmicamente el aislamiento del motor de 160 kW.
+* **Mejora Sugerida:**
+  Modificar la redacción completa de la sección. Explicar técnicamente que el arranque ocurre en Estrella (activación de contactores KM2 y KM3) y la marcha de trabajo continuo en Delta (activación de KM2 y KM1). Corregir los diagramas de conexionado eléctrico de potencia y los tiempos del controlador para reflejar el comportamiento real del sistema convencional.
+
+---
+
+### 2.2. Inconsistencias de Parametrización y Seguridad del VFD (Yaskawa P1000)
+* **Capítulo:** 3. DESARROLLO DE ACTIVIDADES (Sección 3.4.1)
+* **Página / Línea:** Página 22 / Tabla 3.2 (Líneas 933-937, 943-947, 955-959)
+* **Texto Original (Tabla 3.2):**
+  - Parámetro `E1-01`: "Entrada de Voltaje | 240 VAC | Asignar el valor del voltaje de entrada hacia el variador."
+  - Parámetro `E2-01`: "FLA rango del motor | 296 A | Asignar el valor correspondiente de la corriente."
+  - Parámetro `E2-03`: "Corriente sin Carga | 196 A | Determina el valor de la corriente que el motor consume cuando no tiene carga."
+* **Análisis Técnico-Mecatrónico:**
+  Se detectan tres errores graves de puesta en marcha en la programación de los parámetros del motor:
+  1. **Tensión de entrada (`E1-01`):** Si la red eléctrica industrial de la planta opera a 440 VAC (como se establece en la página 24), parametrizar el variador a 240 VAC descalibrará por completo la relación Tensión/Frecuencia (V/f). Esto causará una saturación magnética severa del estator y disparará de inmediato alarmas por sobrecorriente o sobrevoltaje, impidiendo el arranque.
+  2. **Corriente a Plena Carga (`E2-01`):** El FLA real del motor es de 245 A (Tabla 3.1). El estudiante programa `E2-01` a 296 A (que es la corriente nominal del VFD seleccionado). Esto es una violación crítica a la seguridad del motor: el parámetro `E2-01` calibra la protección térmica electrónica integrada del variador (sobrecarga $I^2t$). Si se programa a 296 A, el variador asumirá que el motor puede disipar calor a esa corriente. Si el motor se sobrecarga a 270 A, el variador no se protegerá y el estator se quemará.
+  3. **Corriente de vacío (`E2-03`):** Para un motor de inducción de alta eficiencia de 160 kW y 2 polos, la corriente de vacío oscila típicamente entre el 20% y el 30% de su corriente nominal (FLA), es decir, entre 50 A y 75 A. Parametrizar este valor en 196 A (80% del FLA) degradará por completo el desempeño del control vectorial de par/flujo del variador.
+* **Mejora Sugerida:**
+  Corregir la Tabla 3.2. Los parámetros deben ser: `E1-01 = 440 VAC`, `E2-01 = 245 A`. Respecto a `E2-03`, se debe indicar una estimación teórica correcta de corriente de vacío (~60 A) o, idealmente, proponer la ejecución del procedimiento de autoajuste dinámico (Auto-tuning) del variador desacoplado de la carga para que el propio software del VFD mida de manera precisa este parámetro.
+
+---
+
+### 2.3. Omisión de Diseño Térmico y Grado de Protección en Condiciones Ambientales Hostiles
+* **Capítulo:** 3. DESARROLLO DE ACTIVIDADES (Sección 3.1.1 y 3.3.4)
+* **Página / Líneas:** Página 17 / Líneas 555-559 y Página 20 / Línea 884-886
+* **Texto Original:**
+  > "...las altas temperaturas (mayores a 45°C) son constantes. Además, se presentan problemas de contaminación de polvo y humo..."
+  > "Entorno de trabajo: Es necesario considerar la temperatura, humedad y posibles contaminantes en el área de instalación. Para así determinar un grado de protección (IP) que se adapte al ambiente del lugar."
+* **Análisis Técnico-Mecatrónico:**
+  El estudiante diagnostica correctamente que el cuarto de compresores tiene temperaturas $>45^\circ\text{C}$ y presencia constante de polvo y humo. No obstante, omite realizar los cálculos térmicos y mecánicos de integración de un variador de 160 kW. Un VFD de esta potencia tiene pérdidas de calor internas (disipadas por los IGBTs y rectificador) de aproximadamente el 2% al 3% de su capacidad nominal, es decir, ¡entre 3.2 kW y 4.8 kW de calor!.
+  Si el VFD se instala en un gabinete cerrado estándar en un cuarto a $45^\circ\text{C}$ sin disipación activa y filtros adecuados para el polvo, fallará en muy corto tiempo por sobretemperatura. Asimismo, el variador Yaskawa P1000 requiere un factor de derrateo (derating) de corriente si opera a temperaturas mayores de $40^\circ\text{C}$.
+* **Mejora Sugerida:**
+  1. Especificar y justificar el grado de protección IP del gabinete (ej. IP54 o NEMA 12 con sellado antipolvo).
+  2. Realizar el cálculo del flujo de aire necesario (en $CFM$ o $m^3/h$) para la ventilación forzada con filtros del gabinete, o proponer un sistema de enfriamiento activo (aire acondicionado de gabinete).
+  3. Revisar la curva de derrateo por temperatura del manual del VFD Yaskawa P1000-4A0296 y demostrar matemáticamente que, con la temperatura máxima esperada ($>45^\circ\text{C}$), la corriente de salida nominal derratada sigue cubriendo holgadamente los 245 A requeridos por el motor.
+
+---
+
+### 2.4. Incoherencia Física: Relación Inversa entre Temperatura y Ampacidad de Conductores
+* **Capítulo:** 3. DESARROLLO DE ACTIVIDADES (Sección 3.3.2 - Por Temperatura)
+* **Página / Líneas:** Página 26 / Líneas 807-811
+* **Texto Original:**
+  > "...que de acuerdo con la temperatura su capacidad de soportar la corriente aumenta, y si bien calibres más pequeños como el 300 Kcmil a unos 90°C es capaz de soportar la corriente de nuestro motor, no es recomendable que se emplee en esas condiciones por mucho tiempo y que ademas a temperaturas bajas este disminuye su capacidad..."
+* **Análisis Técnico-Mecatrónico:**
+  Físicamente, esta afirmación es incorrecta. La resistividad del cobre aumenta con la temperatura. Por lo tanto, a mayor temperatura ambiente, disminuye la capacidad de disipación de calor del cable y su capacidad segura para transportar corriente (su ampacidad) **se reduce**, requiriéndose la aplicación de factores de corrección por temperatura (derrateo de cables). Inversamente, a temperaturas ambiente bajas, los cables pueden conducir más corriente, no menos.
+* **Mejora Sugerida:**
+  Corregir la explicación física. Aplicar de manera rigurosa los factores de corrección por temperatura de la NOM-001-SEDE-2012 (Tabla 310-15(b)(2)(a)) correspondientes a una temperatura ambiente de $45^\circ\text{C}$ o superior, para justificar de forma correcta por qué el calibre 500 kcmil es el adecuado frente a la opción de 300 kcmil.
+
+---
+
+### 2.5. Error Aritmético en la Caída de Tensión
+* **Capítulo:** 3. DESARROLLO DE ACTIVIDADES (Sección 3.3.2 - Por Caída de Tensión)
+* **Página / Líneas:** Página 25 / Líneas 789-792
+* **Texto Original:**
+  > "Lo anterior nos da un resultado para la caída de tensión de: 2.1078 VAC."
+* **Análisis Técnico-Mecatrónico:**
+  Al efectuar la sustitución numérica de los datos en la fórmula trifásica proporcionada por el estudiante:
+  $$\Delta u = \frac{\sqrt{3} \cdot L \cdot I_L \cdot \cos(\phi)}{K \cdot s}$$
+  Para una longitud $L = 50\text{ m}$, corriente $I_L = 245\text{ A}$, $\cos(\phi) = 0.9$, conductividad del cobre $K = 59.6\text{ S}\cdot\text{mm}^2/\text{m}$ y sección $s = 152\text{ mm}^2$ (correspondiente a 300 kcmil):
+  $$\Delta u = \frac{1.732 \cdot 50 \cdot 245 \cdot 0.9}{59.6 \cdot 152} = \frac{19095.3}{9059.2} \approx 4.215\text{ V}$$
+  El valor de "2.1078 VAC" reportado en la memoria es exactamente la mitad del valor calculado (como si se hubiese utilizado la fórmula para sistemas monofásicos o existiera un error de división entre 2). Aunque un valor de 4.21 V sigue estando muy por debajo del límite normativo del 3% (13.2 V), un error de cálculo aritmético de esta naturaleza le resta validez técnica formal a la memoria.
+* **Mejora Sugerida:**
+  Corregir el cálculo en el reporte asentando el valor correcto de $\Delta u = 4.21\text{ V}$ para el cable de 300 kcmil y realizar el cálculo correspondiente para el calibre final seleccionado de 500 kcmil ($s = 253\text{ mm}^2$), lo que dará una caída de tensión real de aproximadamente $2.53\text{ V}$.
+
+---
+
+### 2.6. Inviabilidad y Riesgo Mecánico de la "Propuesta 2" (Control Manual) en Compresores de Tornillo
+* **Capítulo:** 3. DESARROLLO DE ACTIVIDADES (Sección 3.6) y 5. CONCLUSIONES
+* **Página / Línea:** Página 26 / Sección 3.6, Página 32 / Sección 4.3 y Página 43 / Capítulo 5
+* **Texto Original:**
+  > "...se plantea usar botoneras y un potenciómetro externo para poder manejarlo de manera manual... cambiar su velocidad mediante el potenciómetro."
+  > "Finalmente, se llegó a la conclusión de que el uso de la Propuesta 2 cumple con el objetivo planteado, ya que esta permite un mejor control del caudal de aire de salida..."
+* **Análisis Técnico-Mecatrónico:**
+  Un compresor industrial de tornillo rotativo **no debe ser operado manualmente a través de un potenciómetro** por varias razones de seguridad operativa:
+  1. **Lubricación deficiente e integridad física:** Los compresores de tornillo necesitan una velocidad mínima de rotación (típicamente entre 30 Hz y 35 Hz) para asegurar la circulación y presión adecuada del aceite lubricante en la unidad de compresión. Si el operador gira el potenciómetro por debajo de este rango seguro (ej. 15 Hz o 20 Hz), el elemento compresor se sobrecalentará e incluso puede soldarse o desbielarse térmicamente.
+  2. **Riesgo de sobrepresión:** La variación de velocidad debe estar subordinada a la demanda de aire. Si la demanda disminuye y el operador no baja manualmente el potenciómetro a tiempo, la presión interna aumentará críticamente, activando las válvulas de alivio o generando riesgo de explosión en las tuberías si los sistemas de protección fallan.
+  3. **Lazo de Control PID:** El variador debe variar la frecuencia de manera automatizada mediante un lazo cerrado PID (proporcional-integral-derivativo). Se debe utilizar un transductor de presión (4-20 mA o 0-10 V) en el tanque para regular dinámicamente la velocidad del VFD manteniendo la presión de red en un setpoint fijo.
+* **Mejora Sugerida:**
+  1. Descartar el control por potenciómetro manual en la propuesta de operación definitiva.
+  2. Modificar la propuesta técnica detallando la implementación de un transductor de presión analógico en lazo cerrado con el PID interno del VFD.
+  3. Establecer explícitamente en la memoria técnica los límites de frecuencia mínima (`d2-02 = 50%` o `30 Hz`) en el variador para proteger la lubricación del compresor.
+
+---
+
+### 2.7. Omisión de la Eficiencia en el Cálculo de Corriente Eléctrica
+* **Capítulo:** 2. MARCO TEÓRICO y 3. DESARROLLO DE ACTIVIDADES (Sección 3.3.2)
+* **Página / Línea:** Página 11 / Línea 385 y Página 24 / Líneas 736-745 y 749-756
+* **Texto Original:**
+  > "...se debe tener en cuenta la siguiente fórmula $P = \sqrt{3} \cdot V_L \cdot I_L \cdot \cos(\phi)$..."
+  > "...Dando como resultado: $I_L = 233.2728\text{ A}$, algo que se acerca al valor mostrado en la placa del motor..."
+* **Análisis Técnico-Mecatrónico:**
+  La potencia mecánica nominal (160 kW) que está en la placa de características representa la potencia de salida en el eje del motor. La potencia eléctrica activa demandada de la red es siempre mayor debido a las pérdidas térmicas y mecánicas. La fórmula correcta para un sistema trifásico requiere integrar la eficiencia ($\eta$):
+  $$I_L = \frac{P_{mecanica}}{\sqrt{3} \cdot V_L \cdot \cos(\phi) \cdot \eta}$$
+  Si sustituimos la eficiencia indicada por el fabricante en la Tabla 3.1 ($\eta = 95.4\%$ o $0.954$):
+  $$I_L = \frac{160000}{\sqrt{3} \cdot 440 \cdot 0.90 \cdot 0.954} = \frac{160000}{652.79} \approx 245.1\text{ A}$$
+  Este cálculo teórico coincide perfectamente con los 245 A reales indicados en la placa. Omitir la eficiencia en un cálculo de diseño de conductores es un error de fundamentación termodinámica y eléctrica.
+* **Mejora Sugerida:**
+  Modificar las ecuaciones en el Marco Teórico y en el capítulo de desarrollo para integrar el factor de eficiencia y recalcular el resultado para coincidir adecuadamente con la placa del motor.
+
+---
+
+### 2.8. Inadecuado Criterio de Selección de Protecciones Eléctricas para VFD
+* **Capítulo:** 3. DESARROLLO DE ACTIVIDADES (Sección 3.3.3)
+* **Página / Línea:** Página 27 / Líneas 839-856
+* **Texto Original:**
+  > "...el FLA debe ser un 75 % mayor que el marcado en la placa de datos del motor o bien del valor marcado en la tabla 430.50 de la NEC (FLA*175 %). ... Concluyendo que un fusible cercano al valor obtenido es de 450 A..."
+  > "...Donde para los ITM es necesario que el valor del FLA sea un 250 %. Por lo tanto, haciendo los cálculos: 245 * 2.5 = 612.5. Concluyendo que un ITM correcto debe ser uno de Caja moldeada (MCCB)..."
+* **Análisis Técnico-Mecatrónico:**
+  El sustentante dimensiona los fusibles y el interruptor termomagnético utilizando las pautas generales de la NOM/NEC para motores de arranque directo en red (picos transitorios altos). 
+  Sin embargo, un motor alimentado por variador no genera transitorios elevados y, además, los transistores IGBTs de salida del VFD son sumamente sensibles a las corrientes de cortocircuito. Un fusible industrial general de 450 A tiene una curva de operación lenta que no protegerá al variador ante una falla interna catastrófica. La entrada de un VFD de esta envergadura exige la instalación de **fusibles ultrarrápidos para semiconductores** (clase aR o gR). Adicionalmente, el interruptor termomagnético debe seleccionarse en base a la corriente máxima de entrada del VFD, no al 250% del motor.
+* **Mejora Sugerida:**
+  Descartar el dimensionamiento convencional de fusibles de 450 A y el ITM de 600 A basado en reglas genéricas de motores directos. En su lugar, consultar el manual del fabricante de Yaskawa P1000 para el modelo 4A0296 y especificar los fusibles ultrarrápidos de semiconductores sugeridos por el fabricante.
+
+---
+
+## 3. Inconsistencias de Estructura, Coherencia y Formato
+
+### 3.1. Referencias Cruzadas Incorrectas e Inexistentes
+1. **Anexo Inexistente:** En la página 20 (Línea 621), se indica: *"(véase Anexo 2)"*. Sin embargo, al final de la memoria (Página 36-37) únicamente se encuentra el **Anexo 1** (Tabla de calibres de cable). El Anexo 2 se ha omitido por completo de la memoria.
+2. **Figuras Incorrectas:** En la página 33 (Línea 1128), se señala: *"...tanto en el controlador (figura 3.11) como en el VFD..."*. La Figura 3.11 muestra un "Relevador montado en su base para riel". La referencia correcta debe ser a la **Figura 3.15** (Parámetros de tiempos desde el controlador a sincronizar con el VFD).
+3. **Incoherencia de Figuras de Marco Teórico:** En la página 11 (Líneas 389-395), la Figura 2.2 cuenta con el pie de foto: *"Con la regulación de presión requerida ya no se ajusta el límite máximo ni mínimo de presión"*, mientras que el texto indica: *"La potencia específica se define como la relación entre la potencia eléctrica requerida y el caudal suministrado... (figura 2.2)"*. El texto y la imagen no corresponden al mismo concepto técnico.
+
+### 3.2. Deficiencias de Notación y Simbología
+1. **Corriente Nominal:** En la página 11 (Línea 383) se escribe *"Un, ln, y cos(\phi_n)"*. El uso de la letra "l" minúscula en lugar de "I" mayúscula para representar la corriente eléctrica es una mala práctica de notación. Debe ser $I_n$.
+2. **Variables de Fórmulas:** En la ecuación de gas (Fórmula 2.1) en la página 10, aparecen los términos $P_D$ (Presión de vapor de saturación) y $H_{rel}$ (Humedad relativa) sin definición alguna de su significado físico o sus unidades correspondientes en el Sistema Internacional. Toda variable matemática introducida en el documento debe explicarse inmediatamente después de la ecuación.
+
+### 3.3. Formato de Referencias Bibliográficas
+* **Página 44 / Líneas 1304-1312:** La referencia bibliográfica número [7] presenta una falla de maquetación en el procesador de textos, apareciendo fragmentada palabra por palabra en columnas verticales:
+  ```text
+  [7] S.
+  Yang.
+  Ye3
+  motores
+  asíncronos.
+  [Online].
+  Available:
+  ...
+  ```
+  Debe dársele el formato de párrafo justificado continuo igual al resto de las referencias. Asimismo, corregir el apellido en la referencia [1] (*"J. Aonso"* por *"J. Alonso"*).
+
+---
+
+## 4. Conclusiones y Plan de Trabajo Recomendado
+La memoria técnica presenta un proyecto industrial viable y valioso en términos de eficiencia energética. Sin embargo, carece de la rigurosidad analítica y la coherencia técnica exigidas a nivel de ingeniería.
+
+Se aconseja al sustentante trabajar en los siguientes puntos para su revisión final:
+1. **Corregir la lógica de control del arranque Estrella-Delta** en los capítulos 2 y 3.
+2. **Transformar la "Propuesta 2" de control manual a un lazo cerrado PID automático** basado en la lectura analógica de presión.
+3. **Rectificar los datos del VFD en la Tabla 3.2** (Voltage a 440 V y FLA del motor a 245 A).
+4. **Desarrollar el cálculo térmico del gabinete de control** considerando las pérdidas del VFD y las condiciones climáticas del cuarto de compresores.
+5. **Sanear las referencias cruzadas de figuras y anexos** a lo largo del documento.

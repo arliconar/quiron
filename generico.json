@@ -1,0 +1,30 @@
+{
+  "project": {
+    "name": "Quiron Generic Data",
+    "version": "1.0.0",
+    "description": "Un archivo JSON genérico de ejemplo.",
+    "active": true
+  },
+  "settings": {
+    "theme": "dark",
+    "language": "es",
+    "notifications": {
+      "email": true,
+      "push": false
+    }
+  },
+  "users": [
+    {
+      "id": 1,
+      "name": "Juan Pérez",
+      "role": "admin",
+      "email": "juan.perez@example.com"
+    },
+    {
+      "id": 2,
+      "name": "María Gómez",
+      "role": "user",
+      "email": "maria.gomez@example.com"
+    }
+  ]
+}

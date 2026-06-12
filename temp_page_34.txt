@@ -1,0 +1,22 @@
+3.6.
+Propuesta 2: Control manual
+En esta propuesta se plantea usar botoneras y un potenciómetro externo para poder manejarlo
+de manera manual: desde la activación del arranque y paro del motor, así como cambiar su velo-
+cidad mediante el potenciómetro. Para empezar, es necesario retomar los parámetros generales ya
+establecidos anteriormente en las tablas 3.2 y 3.3, estos no cambian en cualquiera de las 2 propues-
+tas.
+3.6.1.
+Configuración de parámetros
+Posteriormente, es necesario realizar cambios en otros parámetros para la nueva propuesta dada.
+Principalmente en la inicialización (A1-03), la cual permite configurar al Variador de cierta manera
+para que configure sus terminales S1 y S2 como entradas digitales, permitiendo una activación
+de arranque (mediante S1) y paro (S2). Es decir, se inicializa una configuración del tipo 3-Wire
+Sequence (3 hilos), como se muestra en la figura 3.15.
+Figura 3.16: Diagrama de conexión para la función 3-Wire Sequence.
+Posteriormente, es necesario configurar una salida que no sean unas de las primeras 3 que ya
+están siendo usadas una vez que se inicializa el comando de A1-03, para darle la señal al Variador
+que se desea emplear esa configuración; generalmente es la terminal S5, esta se debe igualar al
+valor “0”. Y es necesario que en las conexiones físicas, ya esté conectado el pulsador NC en la
+terminal S2.
+Finalmente, solo se verifica que los parámetros antes mencionados sean correctos.
+26

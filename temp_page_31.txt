@@ -1,0 +1,55 @@
+Tabla 3.3: Parámetros correspondientes a la selección del modo de operación
+Número
+(Ad-
+dress)
+Nombre
+Valor Es-
+tablecido
+Descripción
+b1-01
+Selección de Refe-
+rencia de Frecuencia
+1
+Valor ”1”
+Configurar las terminales como entradas analógi-
+cas
+b1-02
+Selección
+del
+Co-
+mando de Arranque
+Valor “1”
+Permite configurar las terminales como entradas
+digitales
+b1-03
+Selección del Méto-
+do de Paro
+Valor ”0”
+Rampa para Detener
+b1-04
+Selección de Opera-
+ción de Reversa
+Valor “1”
+Determina que se desactive la opción de Reversa.
+Es necesario verificar que el valor de los parámetros d2-01 sea el 100 % y d2-02 sea 0 %. Ade-
+más, ajustar los valores de H1-XX correspondientes a las entradas digitales empleadas en ambos
+casos.
+3.5.
+Propuesta 1: Control desde el HMI
+En esta propuesta, solo se plantea reemplazar los contactores del arranque Delta-Estrella, y
+cambiarlos por el variador, que se conecta directamente al motor. Mientras que el variador se con-
+figura en sus entradas digitales para que las salidas del controlador accionen un relevador, que a su
+vez tendrá la señal de entrada apropiada para el variador.
+Las salidas del controlador corresponderán a las mostradas anteriormente en la figura 3.2. Estas
+serán conectadas a los relevadores seleccionados anteriormente, y podrá ser empleado directamente
+desde la pantalla táctil (3.1) del compresor.
+Para ello es necesario retomar los elementos seleccionados, relacionar las funciones que posee
+la pantalla HMI para determinar si es necesario emplear todos los accionamientos o solo algunos.
+Además, es necesario modificar ciertos parámetros del variador de frecuencia para que opere con
+entradas digitales.
+3.5.1.
+Configuración de parámetros
+Para empezar, se configuran los parámetros de aceleración y desaceleración. Después, se confi-
+guran 2 referencias de frecuencia. Finalmente, se modifican los valores para configurar a las salidas
+correspondientes, los cuales se muestran en las tablas 3.4 y 3.5.
+23

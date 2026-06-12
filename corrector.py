@@ -26,8 +26,7 @@ SYSTEM_PROMPT = (
     "2. Si no hay errores, devuelve un arreglo vacío `[]`.\n"
     "3. La palabra o frase en 'original' DEBE coincidir carácter por carácter con el texto original. Presta mucha atención a mayúsculas, minúsculas y acentos.\n"
     "4. No inventes errores de estilo subjetivos. Concéntrate en errores objetivos.\n"
-    "5. No corrijas nombres propios de herramientas o tecnologías conocidas (ej. Python, PostgreSQL, Docker, etc.).\n\n"
-    "Texto a analizar:"
+    "5. No corrijas nombres propios de herramientas o tecnologías conocidas (ej. Python, PostgreSQL, Docker, etc.).\n"
 )
 
 DOCTOR_PROMPT = (
@@ -38,134 +37,141 @@ DOCTOR_PROMPT = (
     "Tu respuesta debe estar en texto claro, estructurado y profesional."
 )
 
-def get_gemini_js_path() -> str:
+def run_antigravity_cli(text_content: str, page_num: int) -> list:
     """
-    Intenta localizar el archivo de bundle de JavaScript de gemini-cli ('gemini.js')
-    de la instalación global de npm.
-    Devuelve la ruta absoluta si existe, o levanta una excepción.
-    """
-    # 1. Ruta absoluta conocida en el sistema del usuario
-    known_path = r"C:\Users\artzm\AppData\Roaming\npm\node_modules\@google\gemini-cli\bundle\gemini.js"
-    if os.path.exists(known_path):
-        return known_path
-        
-    # 2. Intentar usar la variable de entorno APPDATA
-    appdata = os.environ.get("APPDATA")
-    if appdata:
-        appdata_path = os.path.join(appdata, "npm", "node_modules", "@google", "gemini-cli", "bundle", "gemini.js")
-        if os.path.exists(appdata_path):
-            return appdata_path
-            
-    # 3. Fallback: buscar en directorios comunes
-    raise FileNotFoundError(
-        "No se pudo encontrar el bundle de 'gemini.js' en la instalación global de npm. "
-        "Asegúrate de haber ejecutado 'npm install -g @google/gemini-cli'."
-    )
-
-def run_gemini_cli(text_content: str) -> list:
-    """
-    Ejecuta gemini-cli pasándole el texto por stdin y el prompt como parámetro -p.
+    Ejecuta agy instruyéndole a leer un archivo de texto y generar un JSON con los errores.
     Devuelve la lista de errores encontrados.
     """
     try:
-        js_path = get_gemini_js_path()
+        text_file_path = os.path.abspath(f"temp_page_{page_num}.txt")
+        json_file_path = os.path.abspath(f"temp_errores_{page_num}.json")
         
-        # Invocar directamente el ejecutable 'node' con el script de gemini
-        cmd = [
-            "node",
-            js_path,
-            "-p",
-            SYSTEM_PROMPT,
-            "-o",
-            "json"
-        ]
+        with open(text_file_path, "w", encoding="utf-8") as f:
+            f.write(text_content)
+            
+        prompt = (
+            f"{SYSTEM_PROMPT}\n\n"
+            f"El texto a analizar se encuentra en el archivo: {text_file_path}\n"
+            f"Lee ese archivo y GUARDA tu respuesta JSON en el archivo: {json_file_path}\n"
+            "Asegúrate de crear el archivo JSON en esa ruta y que su contenido sea únicamente el arreglo JSON."
+        )
         
-        # Ejecutar el comando con el contenido de la página como stdin
-        result = subprocess.run(
+        cmd = ["agy", "-p", prompt]
+        
+        # Ejecutar el comando
+        subprocess.run(
             cmd,
-            input=text_content,
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="ignore"
         )
         
-        if result.returncode != 0:
-            print(f"Error al ejecutar gemini-cli:\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}", file=sys.stderr)
+        # Parsear el archivo JSON generado
+        if not os.path.exists(json_file_path):
+            print(f"  [ERROR] Antigravity no generó el archivo {json_file_path}", file=sys.stderr)
             return []
             
-        # Parsear la salida del CLI
-        cli_output = json.loads(result.stdout)
-        response_text = cli_output.get("response", "").strip()
+        with open(json_file_path, "r", encoding="utf-8") as f:
+            response_text = f.read().strip()
+            
+        # Remover códigos ANSI por si acaso
+        ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+        clean_text = ansi_escape.sub('', response_text)
         
-        if not response_text:
-            return []
-            
-        # Limpiar bloques de código markdown si los hay (e.g. ```json ... ```)
-        cleaned_json = response_text
-        if "```" in cleaned_json:
-            match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', cleaned_json)
-            if match:
-                cleaned_json = match.group(1).strip()
-                
-        # Parsear la respuesta del modelo (los errores)
-        try:
-            errors = json.loads(cleaned_json)
-            if isinstance(errors, list):
-                return errors
-            elif isinstance(errors, dict):
-                # Si devolvió un objeto único en vez de un array, lo envolvemos
-                return [errors]
-        except json.JSONDecodeError:
-            # Reintentar limpieza agresiva de caracteres no válidos si es necesario
-            # A veces el modelo añade texto fuera de las llaves
-            match = re.search(r'(\[\s*\{[\s\S]*\}\s*\])', cleaned_json)
+        parsed = None
+        # Estrategia 1: Bloque markdown
+        match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', clean_text)
+        if match:
+            try:
+                parsed = json.loads(match.group(1).strip())
+            except json.JSONDecodeError:
+                pass
+        
+        if parsed is None:
+            # Estrategia 2: Extraer todo desde [ hasta ]
+            match = re.search(r'\[\s*\{[\s\S]*\}\s*\]', clean_text)
             if match:
                 try:
-                    return json.loads(match.group(1))
+                    parsed = json.loads(match.group(0))
                 except json.JSONDecodeError:
                     pass
-            print(f"No se pudo parsear el JSON de la respuesta del modelo: {response_text}", file=sys.stderr)
+                    
+        if parsed is None:
+            # Estrategia 3: Extraer desde { hasta } si devolvió un solo error
+            match = re.search(r'\{\s*"original"[\s\S]*\}', clean_text)
+            if match:
+                try:
+                    parsed = [json.loads(match.group(0))]
+                except json.JSONDecodeError:
+                    pass
+                    
+        if parsed is None:
+            try:
+                parsed = json.loads(clean_text)
+            except json.JSONDecodeError:
+                print(f"  [ERROR] No se pudo parsear el JSON generado:\n{clean_text}", file=sys.stderr)
+                
+        # Limpiar archivos temporales
+        try:
+            if os.path.exists(text_file_path): os.remove(text_file_path)
+            if os.path.exists(json_file_path): os.remove(json_file_path)
+        except Exception as e:
+            print(f"  [AVISO] No se pudieron borrar archivos temporales: {e}", file=sys.stderr)
             
+        if isinstance(parsed, list): return parsed
+        if isinstance(parsed, dict): return [parsed]
+        
     except Exception as e:
-        print(f"Ocurrió un error inesperado al invocar gemini-cli: {e}", file=sys.stderr)
+        print(f"Ocurrió un error inesperado al invocar antigravity-cli: {e}", file=sys.stderr)
         
     return []
 
-def run_gemini_content_review(text_content: str) -> str:
+def run_antigravity_content_review(text_content: str) -> str:
     """
-    Ejecuta gemini-cli para una revisión de contenido técnico usando el DOCTOR_PROMPT.
+    Ejecuta agy para una revisión de contenido técnico usando el DOCTOR_PROMPT,
+    leyendo y escribiendo en archivos para evitar problemas de longitud.
     """
     try:
-        js_path = get_gemini_js_path()
+        text_file_path = os.path.abspath("temp_revision_contenido.txt")
+        output_file_path = os.path.abspath("temp_revision_resultado.txt")
         
-        cmd = [
-            "node",
-            js_path,
-            "-p",
-            DOCTOR_PROMPT,
-            "-o",
-            "json"
-        ]
+        with open(text_file_path, "w", encoding="utf-8") as f:
+            f.write(text_content)
+            
+        prompt = (
+            f"{DOCTOR_PROMPT}\n\n"
+            f"El documento completo se encuentra en el archivo: {text_file_path}\n"
+            f"Lee ese archivo, realiza tu revisión y GUARDA el reporte resultante en el archivo: {output_file_path}\n"
+            "Asegúrate de escribir el resultado en esa ruta."
+        )
         
-        result = subprocess.run(
+        cmd = ["agy", "-p", prompt]
+        
+        subprocess.run(
             cmd,
-            input=text_content,
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="ignore"
         )
         
-        if result.returncode != 0:
-            print(f"Error al ejecutar gemini-cli (revisión de contenido):\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}", file=sys.stderr)
-            return ""
+        revision = ""
+        if os.path.exists(output_file_path):
+            with open(output_file_path, "r", encoding="utf-8") as f:
+                revision = f.read().strip()
+                
+        # Limpiar archivos temporales
+        try:
+            if os.path.exists(text_file_path): os.remove(text_file_path)
+            if os.path.exists(output_file_path): os.remove(output_file_path)
+        except Exception as e:
+            print(f"  [AVISO] No se pudieron borrar archivos temporales: {e}", file=sys.stderr)
             
-        cli_output = json.loads(result.stdout)
-        return cli_output.get("response", "").strip()
+        return revision
             
     except Exception as e:
-        print(f"Ocurrió un error inesperado al invocar gemini-cli para revisión: {e}", file=sys.stderr)
+        print(f"Ocurrió un error inesperado al invocar antigravity-cli para revisión: {e}", file=sys.stderr)
         
     return ""
 
@@ -203,7 +209,7 @@ def find_text_bounds(page, target: str) -> list:
 
 def corregir_reporte_pdf(input_path: str, output_path: str):
     """
-    Abre el PDF de entrada, analiza errores por página usando gemini-cli (sin repetir errores globales),
+    Abre el PDF de entrada, analiza errores por página usando antigravity-cli (sin repetir errores globales),
     agrega anotaciones al PDF copia y guarda el resultado.
     """
     if not os.path.exists(input_path):
@@ -231,14 +237,14 @@ def corregir_reporte_pdf(input_path: str, output_path: str):
             print("Página vacía o sin texto extraíble. Omitiendo.")
             continue
             
-        print("Enviando texto a Gemini...")
-        errors = run_gemini_cli(text_content)
+        print("Enviando texto a Antigravity...")
+        errors = run_antigravity_cli(text_content, page_num + 1)
         
         if not errors:
             print("No se encontraron errores en esta página (o la respuesta fue vacía).")
             continue
             
-        print(f"Gemini reportó {len(errors)} posibles errores.")
+        print(f"Antigravity reportó {len(errors)} posibles errores.")
         
         # Procesar cada error reportado
         for err in errors:
@@ -265,7 +271,7 @@ def corregir_reporte_pdf(input_path: str, output_path: str):
             
             if not rects:
                 # Si falló, intentar buscar sin case-sensitivity o con ligeras modificaciones
-                # (a veces Gemini devuelve la palabra con su corrección o sin un acento del original)
+                # (a veces Antigravity devuelve la palabra con su corrección o sin un acento del original)
                 print(f"  [AVISO] No se encontraron coordenadas exactas para la palabra '{original}' en el PDF.")
                 continue
                 
@@ -304,7 +310,7 @@ def corregir_reporte_pdf(input_path: str, output_path: str):
     full_text = "\n\n".join(all_text_with_pages)
     
     print("Enviando el documento completo para revisión de contenido (esto puede tardar unos momentos)...")
-    revision_contenido = run_gemini_content_review(full_text)
+    revision_contenido = run_antigravity_content_review(full_text)
     
     txt_output_path = ""
     if revision_contenido:
@@ -318,8 +324,14 @@ def corregir_reporte_pdf(input_path: str, output_path: str):
 
     # Guardar el PDF copia con las anotaciones
     print(f"\nGuardando PDF corregido en: {output_path}...")
-    doc.save(output_path)
-    doc.close()
+    if os.path.abspath(input_path) == os.path.abspath(output_path):
+        temp_output_path = output_path + ".tmp.pdf"
+        doc.save(temp_output_path)
+        doc.close()
+        os.replace(temp_output_path, output_path)
+    else:
+        doc.save(output_path)
+        doc.close()
     
     print("\n==================================================")
     print("PROCESO TERMINADO EXITOSAMENTE")
@@ -333,7 +345,7 @@ def corregir_reporte_pdf(input_path: str, output_path: str):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Corrige errores ortográficos y gramaticales en reportes PDF usando gemini-cli y crea un PDF copia anotado."
+        description="Corrige errores ortográficos y gramaticales en reportes PDF usando antigravity-cli y crea un PDF copia anotado."
     )
     parser.add_argument(
         "-i", "--input",
@@ -342,7 +354,7 @@ def main():
     )
     parser.add_argument(
         "-o", "--output",
-        help="Ruta donde se guardará el PDF corregido. Por defecto se añade '_corregido' al nombre original."
+        help="Ruta donde se guardará el PDF corregido. Por defecto sobrescribe el archivo original."
     )
     
     args = parser.parse_args()
@@ -352,9 +364,8 @@ def main():
     if args.output:
         output_path = os.path.abspath(args.output)
     else:
-        # Generar nombre automático
-        base, ext = os.path.splitext(input_path)
-        output_path = f"{base}_corregido{ext}"
+        # Sobrescribir el archivo original
+        output_path = input_path
         
     corregir_reporte_pdf(input_path, output_path)
 
