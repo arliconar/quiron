@@ -4,14 +4,21 @@ import json
 import re
 import argparse
 import subprocess
-import pymupdf
 import concurrent.futures
+import pymupdf
+import requests
+import time
+import random
+import time
 
 # Configuración del Prompt del Sistema para Gemini
-SYSTEM_PROMPT = (
+DEFAULT_SYSTEM_PERSONALITY = (
     "Eres un corrector de estilo y ortografía profesional para textos académicos y reportes de estadías en español. "
     "Tu tarea es analizar el texto proporcionado en busca de errores ortográficos, gramaticales, de acentuación, "
-    "concordancia, puntuación o de redacción.\n\n"
+    "concordancia, puntuación o de redacción."
+)
+
+SYSTEM_PROMPT_JSON_INSTRUCTIONS = (
     "Para cada error encontrado, debes devolver un objeto JSON. La respuesta completa debe ser un arreglo de objetos JSON "
     "con la siguiente estructura exacta:\n"
     "[\n"
@@ -30,7 +37,7 @@ SYSTEM_PROMPT = (
     "5. No corrijas nombres propios de herramientas o tecnologías conocidas (ej. Python, PostgreSQL, Docker, etc.).\n"
 )
 
-DOCTOR_PROMPT = (
+DEFAULT_DOCTOR_PROMPT = (
     "Eres un Doctor en Mecatrónica evaluando una memoria de estadía (reporte de prácticas profesionales). "
     "Tu tarea es revisar rigurosamente el contenido técnico, la estructura, la coherencia y la profundidad del trabajo. "
     "Crea un reporte con correcciones y sugerencias acerca del contenido. "
@@ -38,12 +45,27 @@ DOCTOR_PROMPT = (
     "Tu respuesta debe estar en texto claro, estructurado y profesional."
 )
 
-def run_antigravity_cli(text_content: str, page_num: int) -> list:
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROMPTS_FILE = os.path.join(BASE_DIR, "prompts.json")
+
+def load_prompts():
+    if os.path.exists(PROMPTS_FILE):
+        try:
+            with open(PROMPTS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data.get("system_personality", DEFAULT_SYSTEM_PERSONALITY), data.get("doctor_prompt", DEFAULT_DOCTOR_PROMPT)
+        except Exception:
+            pass
+    return DEFAULT_SYSTEM_PERSONALITY, DEFAULT_DOCTOR_PROMPT
+
+def run_agent_cli(text_content: str, page_num: int, agent: str = "Antigravity") -> list:
     """
-    Ejecuta agy instruyéndole a leer un archivo de texto y generar un JSON con los errores.
+    Ejecuta el agente instruyéndole a leer un archivo de texto y generar un JSON con los errores.
     Devuelve la lista de errores encontrados.
     """
     try:
+        system_personality, _ = load_prompts()
+        system_prompt = f"{system_personality}\n\n{SYSTEM_PROMPT_JSON_INSTRUCTIONS}"
         text_file_path = os.path.abspath(f"temp_page_{page_num}.txt")
         json_file_path = os.path.abspath(f"temp_errores_{page_num}.json")
         
@@ -51,13 +73,19 @@ def run_antigravity_cli(text_content: str, page_num: int) -> list:
             f.write(text_content)
             
         prompt = (
-            f"{SYSTEM_PROMPT}\n\n"
+            f"{system_prompt}\n\n"
             f"El texto a analizar se encuentra en el archivo: {text_file_path}\n"
             f"Lee ese archivo y GUARDA tu respuesta JSON en el archivo: {json_file_path}\n"
             "Asegúrate de crear el archivo JSON en esa ruta y que su contenido sea únicamente el arreglo JSON."
         )
         
-        cmd = ["agy", "-p", prompt]
+        prompt_str = prompt.strip()
+        if agent == "GitHub CLI":
+            cmd = ["gh", "copilot", "explain", prompt_str]
+        elif agent == "Claude Code":
+            cmd = ["claude", "-p", prompt_str]
+        else: # Antigravity por defecto
+            cmd = ["agy", "-p", prompt_str]
         
         # Ejecutar el comando
         subprocess.run(
@@ -70,7 +98,7 @@ def run_antigravity_cli(text_content: str, page_num: int) -> list:
         
         # Parsear el archivo JSON generado
         if not os.path.exists(json_file_path):
-            print(f"  [ERROR] Antigravity no generó el archivo {json_file_path}", file=sys.stderr)
+            print(f"  [ERROR] El agente no generó el archivo {json_file_path}", file=sys.stderr)
             return []
             
         with open(json_file_path, "r", encoding="utf-8") as f:
@@ -124,16 +152,17 @@ def run_antigravity_cli(text_content: str, page_num: int) -> list:
         if isinstance(parsed, dict): return [parsed]
         
     except Exception as e:
-        print(f"Ocurrió un error inesperado al invocar antigravity-cli: {e}", file=sys.stderr)
+        print(f"Ocurrió un error inesperado al invocar {agent}: {e}", file=sys.stderr)
         
     return []
 
-def run_antigravity_content_review(text_content: str) -> str:
+def run_content_review_cli(text_content: str, agent: str = "Antigravity") -> str:
     """
-    Ejecuta agy para una revisión de contenido técnico usando el DOCTOR_PROMPT,
+    Ejecuta el agente para una revisión de contenido técnico usando el DOCTOR_PROMPT,
     leyendo y escribiendo en archivos para evitar problemas de longitud.
     """
     try:
+        _, doctor_prompt = load_prompts()
         text_file_path = os.path.abspath("temp_revision_contenido.txt")
         output_file_path = os.path.abspath("temp_revision_resultado.txt")
         
@@ -141,13 +170,19 @@ def run_antigravity_content_review(text_content: str) -> str:
             f.write(text_content)
             
         prompt = (
-            f"{DOCTOR_PROMPT}\n\n"
+            f"{doctor_prompt}\n\n"
             f"El documento completo se encuentra en el archivo: {text_file_path}\n"
             f"Lee ese archivo, realiza tu revisión y GUARDA el reporte resultante en el archivo: {output_file_path}\n"
             "Asegúrate de escribir el resultado en esa ruta."
         )
         
-        cmd = ["agy", "-p", prompt]
+        prompt_str = prompt.strip()
+        if agent == "GitHub CLI":
+            cmd = ["gh", "copilot", "explain", prompt_str]
+        elif agent == "Claude Code":
+            cmd = ["claude", "-p", prompt_str]
+        else:
+            cmd = ["agy", "-p", prompt_str]
         
         subprocess.run(
             cmd,
@@ -172,7 +207,209 @@ def run_antigravity_content_review(text_content: str) -> str:
         return revision
             
     except Exception as e:
-        print(f"Ocurrió un error inesperado al invocar antigravity-cli para revisión: {e}", file=sys.stderr)
+        print(f"Ocurrió un error inesperado al invocar {agent} para revisión: {e}", file=sys.stderr)
+        
+    return ""
+
+
+def run_agent_api(text_content: str, api_llm: str, api_model: str) -> list:
+    """
+    Ejecuta el agente utilizando llamadas directas a la API del proveedor seleccionado.
+    """
+    system_personality, _ = load_prompts()
+    system_prompt = f"{system_personality}\n\n{SYSTEM_PROMPT_JSON_INSTRUCTIONS}"
+    prompt = f"{system_prompt}\n\nEl texto a analizar es el siguiente:\n\n{text_content}"
+    
+    url = ""
+    headers = {}
+    payload = {}
+    
+    try:
+        if api_llm == "ChatGPT":
+            api_key = os.environ.get("OPENAI_API_KEY", "")
+            url = "https://api.openai.com/v1/chat/completions"
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            payload = {
+                "model": api_model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2
+            }
+        elif api_llm == "Gemini":
+            api_key = os.environ.get("GEMINI_API_KEY", "")
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{api_model}:generateContent?key={api_key}"
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.2}
+            }
+        elif api_llm == "Claude":
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            url = "https://api.anthropic.com/v1/messages"
+            headers = {
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json"
+            }
+            payload = {
+                "model": api_model,
+                "max_tokens": 4096,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2
+            }
+        elif api_llm == "Grok":
+            api_key = os.environ.get("XAI_API_KEY", "")
+            url = "https://api.x.ai/v1/chat/completions"
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            payload = {
+                "model": api_model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2
+            }
+        else:
+            return []
+
+        max_retries = 10
+        base_delay = 5
+        for attempt in range(max_retries):
+            response = requests.post(url, headers=headers, json=payload)
+            if response.status_code in [429, 500, 502, 503, 504]:
+                delay = base_delay * (2 ** attempt) + random.uniform(1, 5)
+                print(f"  [AVISO] HTTP {response.status_code} por {api_llm}. Reintentando en {delay:.1f}s...", file=sys.stderr)
+                time.sleep(delay)
+                continue
+            response.raise_for_status()
+            break
+        else:
+            response.raise_for_status()
+        data = response.json()
+        
+        response_text = ""
+        if api_llm in ["ChatGPT", "Grok"]:
+            response_text = data["choices"][0]["message"]["content"]
+        elif api_llm == "Gemini":
+            response_text = data["candidates"][0]["content"]["parts"][0]["text"]
+        elif api_llm == "Claude":
+            response_text = data["content"][0]["text"]
+
+        clean_text = response_text.strip()
+        
+        parsed = None
+        match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', clean_text)
+        if match:
+            try:
+                parsed = json.loads(match.group(1).strip())
+            except json.JSONDecodeError:
+                pass
+        
+        if parsed is None:
+            match = re.search(r'\[\s*\{[\s\S]*\}\s*\]', clean_text)
+            if match:
+                try:
+                    parsed = json.loads(match.group(0))
+                except json.JSONDecodeError:
+                    pass
+                    
+        if parsed is None:
+            match = re.search(r'\{\s*"original"[\s\S]*\}', clean_text)
+            if match:
+                try:
+                    parsed = [json.loads(match.group(0))]
+                except json.JSONDecodeError:
+                    pass
+                    
+        if parsed is None:
+            try:
+                parsed = json.loads(clean_text)
+            except json.JSONDecodeError:
+                print(f"  [ERROR] No se pudo parsear el JSON generado por {api_llm}:\n{clean_text}", file=sys.stderr)
+                
+        if isinstance(parsed, list): return parsed
+        if isinstance(parsed, dict): return [parsed]
+        
+    except Exception as e:
+        print(f"Ocurrió un error inesperado al invocar {api_llm} via API: {e}", file=sys.stderr)
+        
+    return []
+
+def run_content_review_api(text_content: str, api_llm: str, api_model: str) -> str:
+    """
+    Ejecuta el agente para revisión de contenido utilizando la API directa.
+    """
+    _, doctor_prompt = load_prompts()
+    prompt = f"{doctor_prompt}\n\nEl documento completo es el siguiente:\n\n{text_content}"
+    
+    url = ""
+    headers = {}
+    payload = {}
+    
+    try:
+        if api_llm == "ChatGPT":
+            api_key = os.environ.get("OPENAI_API_KEY", "")
+            url = "https://api.openai.com/v1/chat/completions"
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            payload = {
+                "model": api_model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.3
+            }
+        elif api_llm == "Gemini":
+            api_key = os.environ.get("GEMINI_API_KEY", "")
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{api_model}:generateContent?key={api_key}"
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.3}
+            }
+        elif api_llm == "Claude":
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            url = "https://api.anthropic.com/v1/messages"
+            headers = {
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json"
+            }
+            payload = {
+                "model": api_model,
+                "max_tokens": 4096,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.3
+            }
+        elif api_llm == "Grok":
+            api_key = os.environ.get("XAI_API_KEY", "")
+            url = "https://api.x.ai/v1/chat/completions"
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            payload = {
+                "model": api_model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.3
+            }
+        else:
+            return ""
+
+        max_retries = 10
+        base_delay = 5
+        for attempt in range(max_retries):
+            response = requests.post(url, headers=headers, json=payload)
+            if response.status_code in [429, 500, 502, 503, 504]:
+                delay = base_delay * (2 ** attempt) + random.uniform(1, 5)
+                print(f"  [AVISO] HTTP {response.status_code} por {api_llm}. Reintentando en {delay:.1f}s...", file=sys.stderr)
+                time.sleep(delay)
+                continue
+            response.raise_for_status()
+            break
+        else:
+            response.raise_for_status()
+        data = response.json()
+        
+        if api_llm in ["ChatGPT", "Grok"]:
+            return data["choices"][0]["message"]["content"].strip()
+        elif api_llm == "Gemini":
+            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        elif api_llm == "Claude":
+            return data["content"][0]["text"].strip()
+            
+    except Exception as e:
+        print(f"Ocurrió un error al invocar {api_llm} para revisión: {e}", file=sys.stderr)
         
     return ""
 
@@ -208,9 +445,9 @@ def find_text_bounds(page, target: str) -> list:
         
     return rects
 
-def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10):
+def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10, agent_name: str = "Antigravity", mode: str = "cli", api_llm: str = "", api_model: str = ""):
     """
-    Abre el PDF de entrada, analiza errores por página usando antigravity-cli (sin repetir errores globales),
+    Abre el PDF de entrada, analiza errores por página usando el CLI seleccionado,
     agrega anotaciones al PDF copia y guarda el resultado.
     """
     if not os.path.exists(input_path):
@@ -244,7 +481,10 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
         if not page_text:
             return page_index, []
         print(f"Lanzando revisión de Página {page_index + 1}...")
-        errs = run_antigravity_cli(page_text, page_index + 1)
+        if mode == "api":
+            errs = run_agent_api(page_text, api_llm, api_model)
+        else:
+            errs = run_agent_cli(page_text, page_index + 1, agent_name)
         return page_index, errs
 
     print(f"\n--- Analizando ortografía en paralelo ({num_agents} instancias) ---")
@@ -311,10 +551,14 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
                 total_anotaciones_creadas += 1
 
     # --- REVISIÓN DE CONTENIDO (DOCTOR EN MECATRÓNICA) ---
-    print("\n--- Iniciando revisión de contenido técnico (Doctor en Mecatrónica) ---")
+    agent_display = f"{api_llm} ({api_model})" if mode == "api" else agent_name
+    print(f"\n--- Iniciando revisión de contenido global usando {agent_display} ---")
     
     print("Enviando el documento completo para revisión de contenido (esto puede tardar unos momentos)...")
-    revision_contenido = run_antigravity_content_review(full_text)
+    if mode == "api":
+        revision_contenido = run_content_review_api(full_text, api_llm, api_model)
+    else:
+        revision_contenido = run_content_review_cli(full_text, agent_name)
     
     txt_output_path = ""
     if revision_contenido:
@@ -364,7 +608,13 @@ def main():
         "-a", "--agents",
         type=int,
         default=10,
-        help="Número de agentes (hilos) a ejecutar en paralelo. Por defecto es 10."
+        help="Número de hilos a ejecutar en paralelo. Por defecto es 10."
+    )
+    parser.add_argument(
+        "--agent-cli",
+        choices=["Antigravity", "GitHub CLI", "Claude Code"],
+        default="Antigravity",
+        help="CLI a utilizar para la corrección."
     )
     
     args = parser.parse_args()
@@ -377,7 +627,7 @@ def main():
         # Sobrescribir el archivo original
         output_path = input_path
         
-    corregir_reporte_pdf(input_path, output_path, args.agents)
+    corregir_reporte_pdf(input_path, output_path, args.agents, args.agent_cli)
 
 if __name__ == "__main__":
     main()

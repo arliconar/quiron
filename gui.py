@@ -4,6 +4,7 @@ import threading
 import sys
 import os
 import queue
+import json
 
 # Importar la lógica de corrección
 try:
@@ -11,6 +12,15 @@ try:
 except ImportError:
     messagebox.showerror("Error", "No se encontró el archivo corrector.py")
     sys.exit(1)
+
+CONFIG_FILE = "config.json"
+
+MODELS_JSON = {
+    "ChatGPT": ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"],
+    "Gemini": ["gemini-3.5-flash", "gemini-3.5-pro", "gemini-1.5-flash", "gemini-1.5-pro"],
+    "Claude": ["claude-3-haiku-20240307", "claude-3-5-sonnet-20240620", "claude-3-sonnet-20240229", "claude-3-opus-20240229"],
+    "Grok": ["grok-beta", "grok-2", "grok-2-mini"]
+}
 
 class StdoutRedirector:
     def __init__(self, text_widget, msg_queue):
@@ -27,21 +37,78 @@ class QuironGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Quirón - Corrector de Reportes PDF")
-        self.root.geometry("680x550")
+        self.root.geometry("680x680")
         self.root.resizable(False, False)
         
         self.input_file = tk.StringVar()
         self.agents_var = tk.IntVar(value=10)
         self.overwrite_var = tk.BooleanVar(value=False)
+        self.mode_var = tk.StringVar(value="cli") # 'cli' o 'api'
+        self.agent_var = tk.StringVar(value="Antigravity")
+        
+        self.api_llm_var = tk.StringVar(value="ChatGPT")
+        self.api_model_var = tk.StringVar(value="gpt-4o-mini")
+        self.api_key_var = tk.StringVar()
+        
+        self.config_data = self.load_config()
         
         self.msg_queue = queue.Queue()
         
         self.create_widgets()
+        
+        self.apply_config()
+        
         self.root.after(100, self.process_queue)
         
         # Redirigir stdout y stderr
         sys.stdout = StdoutRedirector(self.console_text, self.msg_queue)
         sys.stderr = StdoutRedirector(self.console_text, self.msg_queue)
+
+    def load_config(self):
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    def save_config(self):
+        self.config_data["api_keys"] = self.config_data.get("api_keys", {})
+        llm = self.api_llm_var.get()
+        key = self.api_key_var.get()
+        if key:
+            self.config_data["api_keys"][llm] = key
+            
+        self.config_data["last_llm"] = llm
+        self.config_data["last_model"] = self.api_model_var.get()
+        self.config_data["mode"] = self.mode_var.get()
+        
+        try:
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(self.config_data, f, indent=4)
+        except Exception as e:
+            print(f"Error guardando configuración: {e}", file=sys.stderr)
+
+    def apply_config(self):
+        if "mode" in self.config_data:
+            self.mode_var.set(self.config_data["mode"])
+        if "last_llm" in self.config_data:
+            self.api_llm_var.set(self.config_data["last_llm"])
+        if "last_model" in self.config_data:
+            self.api_model_var.set(self.config_data["last_model"])
+        self.toggle_mode()
+
+    def update_api_key_from_config(self, *args):
+        llm = self.api_llm_var.get()
+        keys = self.config_data.get("api_keys", {})
+        self.api_key_var.set(keys.get(llm, ""))
+        
+        # Actualizar modelos disponibles
+        models = MODELS_JSON.get(llm, [])
+        self.api_model_combo['values'] = models
+        if models and self.api_model_var.get() not in models:
+            self.api_model_var.set(models[0])
 
     def create_widgets(self):
         # Frame principal
@@ -62,13 +129,50 @@ class QuironGUI:
         options_frame = ttk.LabelFrame(main_frame, text="2. Opciones de Ejecución", padding="10")
         options_frame.pack(fill=tk.X, pady=5)
         
-        # Agentes
-        ttk.Label(options_frame, text="Número de Agentes (Hilos paralelos):").grid(row=0, column=0, sticky=tk.W, pady=5)
+        # Agentes y Modo
+        ttk.Label(options_frame, text="Modo de Ejecución:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        mode_frame = ttk.Frame(options_frame)
+        mode_frame.grid(row=0, column=1, sticky=tk.W, pady=5)
+        
+        ttk.Radiobutton(mode_frame, text="CLI Local (agy, gh, claude)", variable=self.mode_var, value="cli", command=self.toggle_mode).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(mode_frame, text="API Directa (Tokens/Keys)", variable=self.mode_var, value="api", command=self.toggle_mode).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Label(options_frame, text="Hilos paralelos:").grid(row=1, column=0, sticky=tk.W, pady=5)
         agents_spinbox = ttk.Spinbox(options_frame, from_=1, to=50, textvariable=self.agents_var, width=5)
-        agents_spinbox.grid(row=0, column=1, sticky=tk.W, padx=10)
+        agents_spinbox.grid(row=1, column=1, sticky=tk.W, padx=10)
+        
+        # CLI Frame
+        self.cli_frame = ttk.Frame(options_frame)
+        ttk.Label(self.cli_frame, text="Agente CLI:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.agent_combo = ttk.Combobox(self.cli_frame, textvariable=self.agent_var, state='readonly', width=15)
+        self.agent_combo['values'] = ("Antigravity", "GitHub CLI", "Claude Code")
+        self.agent_combo.grid(row=0, column=1, sticky=tk.W, padx=10)
+        
+        # API Frame
+        self.api_frame = ttk.Frame(options_frame)
+        
+        ttk.Label(self.api_frame, text="Proveedor LLM:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.api_llm_combo = ttk.Combobox(self.api_frame, textvariable=self.api_llm_var, state='readonly', width=15)
+        self.api_llm_combo['values'] = list(MODELS_JSON.keys())
+        self.api_llm_combo.grid(row=0, column=1, sticky=tk.W, padx=10)
+        
+        ttk.Label(self.api_frame, text="Modelo:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.api_model_combo = ttk.Combobox(self.api_frame, textvariable=self.api_model_var, state='readonly', width=25)
+        self.api_model_combo.grid(row=1, column=1, sticky=tk.W, padx=10)
+        
+        ttk.Label(self.api_frame, text="API Key:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        self.api_key_entry = ttk.Entry(self.api_frame, textvariable=self.api_key_var, show="*", width=35)
+        self.api_key_entry.grid(row=2, column=1, sticky=tk.W, padx=10)
+        
+        self.api_llm_var.trace_add('write', self.update_api_key_from_config)
+        self.update_api_key_from_config()
+        
+        # Colocar frames dinámicos
+        self.cli_frame.grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=5)
+        self.api_frame.grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=5)
         
         # Sobrescribir
-        ttk.Checkbutton(options_frame, text="Sobrescribir archivo original", variable=self.overwrite_var).grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=5)
+        ttk.Checkbutton(options_frame, text="Sobrescribir archivo original", variable=self.overwrite_var).grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=5)
         
         # --- Sección 3: Acciones ---
         action_frame = ttk.Frame(main_frame, padding="10")
@@ -77,7 +181,11 @@ class QuironGUI:
         self.run_button = ttk.Button(action_frame, text="Iniciar Corrección", command=self.start_correction)
         self.run_button.pack(side=tk.RIGHT, padx=5)
         
-        ttk.Button(action_frame, text="Terminal Antigravity (Opcional)", command=self.login_antigravity).pack(side=tk.RIGHT, padx=5)
+        self.terminal_button = ttk.Button(action_frame, text="Terminal Antigravity (Opcional)", command=self.login_antigravity)
+        self.terminal_button.pack(side=tk.RIGHT, padx=5)
+
+        self.prompts_button = ttk.Button(action_frame, text="Editar Perfiles (Prompts)", command=self.open_prompts_editor)
+        self.prompts_button.pack(side=tk.LEFT, padx=5)
         
         # --- Sección 4: Consola ---
         console_frame = ttk.LabelFrame(main_frame, text="Consola de Progreso", padding="10")
@@ -90,6 +198,17 @@ class QuironGUI:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.console_text.config(yscrollcommand=scrollbar.set)
 
+    def toggle_mode(self):
+        mode = self.mode_var.get()
+        if mode == "cli":
+            self.api_frame.grid_remove()
+            self.cli_frame.grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=5)
+            self.terminal_button.pack(side=tk.RIGHT, padx=5)
+        else:
+            self.cli_frame.grid_remove()
+            self.api_frame.grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=5)
+            self.terminal_button.pack_forget()
+
     def browse_file(self):
         file_path = filedialog.askopenfilename(
             title="Seleccionar Memoria PDF",
@@ -99,11 +218,62 @@ class QuironGUI:
             self.input_file.set(file_path)
 
     def login_antigravity(self):
-        # Abre una consola para interactuar con agy si es necesario (ej: agy login)
         if os.name == 'nt':
             os.system('start cmd /k "agy --help"')
         else:
             self.msg_queue.put("Esta función abre la terminal solo en Windows.\n")
+
+    def open_prompts_editor(self):
+        editor = tk.Toplevel(self.root)
+        editor.title("Editar Perfiles (Prompts)")
+        editor.geometry("700x650")
+        editor.resizable(True, True)
+        
+        try:
+            from corrector import load_prompts
+            system_personality, doctor_prompt = load_prompts()
+        except ImportError:
+            system_personality, doctor_prompt = "", ""
+            
+        main_frame = ttk.Frame(editor, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Corrector Prompt
+        ttk.Label(main_frame, text="Personalidad del Corrector Ortográfico:", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(0,5))
+        system_text = tk.Text(main_frame, height=12, wrap=tk.WORD, font=("Consolas", 10))
+        system_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        system_text.insert(tk.END, system_personality)
+        
+        # Doctor Prompt
+        ttk.Label(main_frame, text="Prompt del Doctor (Revisión de Contenido):", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(0,5))
+        doctor_text = tk.Text(main_frame, height=12, wrap=tk.WORD, font=("Consolas", 10))
+        doctor_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        doctor_text.insert(tk.END, doctor_prompt)
+        
+        def save_prompts():
+            new_system = system_text.get("1.0", tk.END).strip()
+            new_doctor = doctor_text.get("1.0", tk.END).strip()
+            
+            prompts_data = {
+                "system_personality": new_system,
+                "doctor_prompt": new_doctor
+            }
+            
+            try:
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+                prompts_file = os.path.join(base_dir, "prompts.json")
+                with open(prompts_file, "w", encoding="utf-8") as f:
+                    json.dump(prompts_data, f, indent=4, ensure_ascii=False)
+                messagebox.showinfo("Guardado", "Los perfiles han sido guardados exitosamente.", parent=editor)
+                editor.destroy()
+            except Exception as e:
+                messagebox.showerror("Error", f"No se pudieron guardar los perfiles:\n{e}", parent=editor)
+                
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Button(btn_frame, text="Guardar", command=save_prompts).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(btn_frame, text="Cancelar", command=editor.destroy).pack(side=tk.RIGHT, padx=5)
 
     def process_queue(self):
         while not self.msg_queue.empty():
@@ -114,9 +284,9 @@ class QuironGUI:
             self.console_text.config(state=tk.DISABLED)
         self.root.after(100, self.process_queue)
 
-    def run_correction_thread(self, input_path, output_path, num_agents):
+    def run_correction_thread(self, input_path, output_path, num_agents, agent_name, mode, api_llm, api_model):
         try:
-            corregir_reporte_pdf(input_path, output_path, num_agents)
+            corregir_reporte_pdf(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model)
             self.msg_queue.put("\n>>> PROCESO FINALIZADO CON ÉXITO <<<\n")
             messagebox.showinfo("Completado", "El reporte ha sido corregido exitosamente.")
         except Exception as e:
@@ -136,6 +306,34 @@ class QuironGUI:
             messagebox.showwarning("Atención", "El número de agentes debe ser mayor a 0.")
             return
             
+        mode = self.mode_var.get()
+        api_llm = ""
+        api_model = ""
+        agent_name = ""
+        
+        if mode == "api":
+            api_llm = self.api_llm_var.get()
+            api_model = self.api_model_var.get()
+            api_key = self.api_key_var.get()
+            
+            if not api_key:
+                messagebox.showwarning("Atención", "Por favor, ingresa la API Key para continuar.")
+                return
+                
+            # Establecer variable de entorno
+            if api_llm == "ChatGPT":
+                os.environ["OPENAI_API_KEY"] = api_key
+            elif api_llm == "Gemini":
+                os.environ["GEMINI_API_KEY"] = api_key
+            elif api_llm == "Claude":
+                os.environ["ANTHROPIC_API_KEY"] = api_key
+            elif api_llm == "Grok":
+                os.environ["XAI_API_KEY"] = api_key
+                
+            self.save_config()
+        else:
+            agent_name = self.agent_var.get()
+            
         # Determinar archivo de salida
         if self.overwrite_var.get():
             output_path = input_path
@@ -148,12 +346,16 @@ class QuironGUI:
         self.console_text.config(state=tk.DISABLED)
         
         self.run_button.config(state=tk.DISABLED)
-        self.msg_queue.put(f"Iniciando proceso con {num_agents} agentes...\n")
+        if mode == "api":
+            self.msg_queue.put(f"Iniciando proceso con {num_agents} hilos usando API de {api_llm} ({api_model})...\n")
+        else:
+            self.msg_queue.put(f"Iniciando proceso con {num_agents} agentes de {agent_name}...\n")
+            
         self.msg_queue.put(f"Archivo entrada: {input_path}\n")
         self.msg_queue.put(f"Archivo salida: {output_path}\n")
         
         # Lanzar el hilo
-        thread = threading.Thread(target=self.run_correction_thread, args=(input_path, output_path, num_agents))
+        thread = threading.Thread(target=self.run_correction_thread, args=(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model))
         thread.daemon = True
         thread.start()
 
