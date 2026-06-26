@@ -41,8 +41,11 @@ class QuironGUI:
         self.root.resizable(False, False)
         
         self.input_file = tk.StringVar()
+        self.report_file = tk.StringVar()
         self.agents_var = tk.IntVar(value=10)
         self.overwrite_var = tk.BooleanVar(value=False)
+        self.do_spelling_var = tk.BooleanVar(value=True)
+        self.do_dictamen_var = tk.BooleanVar(value=True)
         self.mode_var = tk.StringVar(value="cli") # 'cli' o 'api'
         self.agent_var = tk.StringVar(value="Antigravity")
         
@@ -116,30 +119,43 @@ class QuironGUI:
         main_frame.pack(fill=tk.BOTH, expand=True)
         
         # --- Sección 1: Selección de Archivo ---
-        file_frame = ttk.LabelFrame(main_frame, text="1. Selección de Memoria (PDF)", padding="10")
+        file_frame = ttk.LabelFrame(main_frame, text="1. Selección de Archivos", padding="10")
         file_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(file_frame, text="Ruta del archivo:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        ttk.Label(file_frame, text="Memoria (PDF):").grid(row=0, column=0, sticky=tk.W, pady=5)
         self.file_entry = ttk.Entry(file_frame, textvariable=self.input_file, state='readonly', width=55)
         self.file_entry.grid(row=0, column=1, padx=5, pady=5)
         
-        ttk.Button(file_frame, text="Buscar Archivo...", command=self.browse_file).grid(row=0, column=2, padx=5, pady=5)
+        ttk.Button(file_frame, text="Buscar PDF...", command=self.browse_file).grid(row=0, column=2, padx=5, pady=5)
+        
+        ttk.Label(file_frame, text="Dictamen Académico (opcional):").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.report_entry = ttk.Entry(file_frame, textvariable=self.report_file, state='readonly', width=55)
+        self.report_entry.grid(row=1, column=1, padx=5, pady=5)
+        
+        ttk.Button(file_frame, text="Buscar Destino...", command=self.browse_report).grid(row=1, column=2, padx=5, pady=5)
         
         # --- Sección 2: Opciones de Corrección ---
         options_frame = ttk.LabelFrame(main_frame, text="2. Opciones de Ejecución", padding="10")
         options_frame.pack(fill=tk.X, pady=5)
         
+        # Tareas
+        ttk.Label(options_frame, text="Tareas:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        tasks_frame = ttk.Frame(options_frame)
+        tasks_frame.grid(row=0, column=1, sticky=tk.W, pady=5)
+        ttk.Checkbutton(tasks_frame, text="Corrección Ortográfica", variable=self.do_spelling_var).pack(side=tk.LEFT, padx=5)
+        ttk.Checkbutton(tasks_frame, text="Dictamen Académico", variable=self.do_dictamen_var).pack(side=tk.LEFT, padx=5)
+        
         # Agentes y Modo
-        ttk.Label(options_frame, text="Modo de Ejecución:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        ttk.Label(options_frame, text="Modo de Ejecución:").grid(row=1, column=0, sticky=tk.W, pady=5)
         mode_frame = ttk.Frame(options_frame)
-        mode_frame.grid(row=0, column=1, sticky=tk.W, pady=5)
+        mode_frame.grid(row=1, column=1, sticky=tk.W, pady=5)
         
         ttk.Radiobutton(mode_frame, text="CLI Local (agy, gh, claude)", variable=self.mode_var, value="cli", command=self.toggle_mode).pack(side=tk.LEFT, padx=5)
         ttk.Radiobutton(mode_frame, text="API Directa (Tokens/Keys)", variable=self.mode_var, value="api", command=self.toggle_mode).pack(side=tk.LEFT, padx=5)
         
-        ttk.Label(options_frame, text="Hilos paralelos:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        ttk.Label(options_frame, text="Hilos paralelos:").grid(row=2, column=0, sticky=tk.W, pady=5)
         agents_spinbox = ttk.Spinbox(options_frame, from_=1, to=50, textvariable=self.agents_var, width=5)
-        agents_spinbox.grid(row=1, column=1, sticky=tk.W, padx=10)
+        agents_spinbox.grid(row=2, column=1, sticky=tk.W, padx=10)
         
         # CLI Frame
         self.cli_frame = ttk.Frame(options_frame)
@@ -168,11 +184,11 @@ class QuironGUI:
         self.update_api_key_from_config()
         
         # Colocar frames dinámicos
-        self.cli_frame.grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=5)
-        self.api_frame.grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=5)
+        self.cli_frame.grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=5)
+        self.api_frame.grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=5)
         
         # Sobrescribir
-        ttk.Checkbutton(options_frame, text="Sobrescribir archivo original", variable=self.overwrite_var).grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=5)
+        ttk.Checkbutton(options_frame, text="Sobrescribir archivo original", variable=self.overwrite_var).grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=5)
         
         # --- Sección 3: Acciones ---
         action_frame = ttk.Frame(main_frame, padding="10")
@@ -217,6 +233,15 @@ class QuironGUI:
         if file_path:
             self.input_file.set(file_path)
 
+    def browse_report(self):
+        file_path = filedialog.asksaveasfilename(
+            title="Guardar Dictamen Académico",
+            defaultextension=".txt",
+            filetypes=[("Archivos de Texto", "*.txt")]
+        )
+        if file_path:
+            self.report_file.set(file_path)
+
     def login_antigravity(self):
         if os.name == 'nt':
             os.system('start cmd /k "agy --help"')
@@ -231,9 +256,9 @@ class QuironGUI:
         
         try:
             from corrector import load_prompts
-            system_personality, doctor_prompt = load_prompts()
+            system_personality, dictamen_prompt = load_prompts()
         except ImportError:
-            system_personality, doctor_prompt = "", ""
+            system_personality, dictamen_prompt = "", ""
             
         main_frame = ttk.Frame(editor, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -244,19 +269,19 @@ class QuironGUI:
         system_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         system_text.insert(tk.END, system_personality)
         
-        # Doctor Prompt
-        ttk.Label(main_frame, text="Prompt del Doctor (Revisión de Contenido):", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(0,5))
-        doctor_text = tk.Text(main_frame, height=12, wrap=tk.WORD, font=("Consolas", 10))
-        doctor_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-        doctor_text.insert(tk.END, doctor_prompt)
+        # Dictamen Prompt
+        ttk.Label(main_frame, text="Prompt del Dictamen Académico (Revisión de Contenido):", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(0,5))
+        dictamen_text = tk.Text(main_frame, height=12, wrap=tk.WORD, font=("Consolas", 10))
+        dictamen_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        dictamen_text.insert(tk.END, dictamen_prompt)
         
         def save_prompts():
             new_system = system_text.get("1.0", tk.END).strip()
-            new_doctor = doctor_text.get("1.0", tk.END).strip()
+            new_dictamen = dictamen_text.get("1.0", tk.END).strip()
             
             prompts_data = {
                 "system_personality": new_system,
-                "doctor_prompt": new_doctor
+                "dictamen_prompt": new_dictamen
             }
             
             try:
@@ -284,9 +309,9 @@ class QuironGUI:
             self.console_text.config(state=tk.DISABLED)
         self.root.after(100, self.process_queue)
 
-    def run_correction_thread(self, input_path, output_path, num_agents, agent_name, mode, api_llm, api_model):
+    def run_correction_thread(self, input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen):
         try:
-            corregir_reporte_pdf(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model)
+            corregir_reporte_pdf(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen)
             self.msg_queue.put("\n>>> PROCESO FINALIZADO CON ÉXITO <<<\n")
             messagebox.showinfo("Completado", "El reporte ha sido corregido exitosamente.")
         except Exception as e:
@@ -354,8 +379,17 @@ class QuironGUI:
         self.msg_queue.put(f"Archivo entrada: {input_path}\n")
         self.msg_queue.put(f"Archivo salida: {output_path}\n")
         
+        report_path = self.report_file.get()
+        do_spelling = self.do_spelling_var.get()
+        do_dictamen = self.do_dictamen_var.get()
+        
+        if not do_spelling and not do_dictamen:
+            self.msg_queue.put("No se seleccionó ninguna tarea a realizar.\n")
+            self.run_button.config(state=tk.NORMAL)
+            return
+            
         # Lanzar el hilo
-        thread = threading.Thread(target=self.run_correction_thread, args=(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model))
+        thread = threading.Thread(target=self.run_correction_thread, args=(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen))
         thread.daemon = True
         thread.start()
 

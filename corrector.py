@@ -37,10 +37,10 @@ SYSTEM_PROMPT_JSON_INSTRUCTIONS = (
     "5. No corrijas nombres propios de herramientas o tecnologías conocidas (ej. Python, PostgreSQL, Docker, etc.).\n"
 )
 
-DEFAULT_DOCTOR_PROMPT = (
-    "Eres un Doctor en Mecatrónica evaluando una memoria de estadía (reporte de prácticas profesionales). "
+DEFAULT_DICTAMEN_PROMPT = (
+    "Eres un Académico evaluando un documento (reporte, tesis, memoria, etc.). "
     "Tu tarea es revisar rigurosamente el contenido técnico, la estructura, la coherencia y la profundidad del trabajo. "
-    "Crea un reporte con correcciones y sugerencias acerca del contenido. "
+    "Crea un dictamen con correcciones y sugerencias acerca del contenido. "
     "Para cada observación, incluye (si es posible): el capítulo, la hoja/página, el texto original al que haces referencia, y la mejora sugerida. "
     "Tu respuesta debe estar en texto claro, estructurado y profesional."
 )
@@ -53,10 +53,10 @@ def load_prompts():
         try:
             with open(PROMPTS_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return data.get("system_personality", DEFAULT_SYSTEM_PERSONALITY), data.get("doctor_prompt", DEFAULT_DOCTOR_PROMPT)
+                return data.get("system_personality", DEFAULT_SYSTEM_PERSONALITY), data.get("dictamen_prompt", DEFAULT_DICTAMEN_PROMPT)
         except Exception:
             pass
-    return DEFAULT_SYSTEM_PERSONALITY, DEFAULT_DOCTOR_PROMPT
+    return DEFAULT_SYSTEM_PERSONALITY, DEFAULT_DICTAMEN_PROMPT
 
 def run_agent_cli(text_content: str, page_num: int, agent: str = "Antigravity") -> list:
     """
@@ -158,11 +158,11 @@ def run_agent_cli(text_content: str, page_num: int, agent: str = "Antigravity") 
 
 def run_content_review_cli(text_content: str, agent: str = "Antigravity") -> str:
     """
-    Ejecuta el agente para una revisión de contenido técnico usando el DOCTOR_PROMPT,
+    Ejecuta el agente para una revisión de contenido técnico usando el dictamen,
     leyendo y escribiendo en archivos para evitar problemas de longitud.
     """
     try:
-        _, doctor_prompt = load_prompts()
+        _, dictamen_prompt = load_prompts()
         text_file_path = os.path.abspath("temp_revision_contenido.txt")
         output_file_path = os.path.abspath("temp_revision_resultado.txt")
         
@@ -170,7 +170,7 @@ def run_content_review_cli(text_content: str, agent: str = "Antigravity") -> str
             f.write(text_content)
             
         prompt = (
-            f"{doctor_prompt}\n\n"
+            f"{dictamen_prompt}\n\n"
             f"El documento completo se encuentra en el archivo: {text_file_path}\n"
             f"Lee ese archivo, realiza tu revisión y GUARDA el reporte resultante en el archivo: {output_file_path}\n"
             "Asegúrate de escribir el resultado en esa ruta."
@@ -335,8 +335,8 @@ def run_content_review_api(text_content: str, api_llm: str, api_model: str) -> s
     """
     Ejecuta el agente para revisión de contenido utilizando la API directa.
     """
-    _, doctor_prompt = load_prompts()
-    prompt = f"{doctor_prompt}\n\nEl documento completo es el siguiente:\n\n{text_content}"
+    _, dictamen_prompt = load_prompts()
+    prompt = f"{dictamen_prompt}\n\nEl documento completo es el siguiente:\n\n{text_content}"
     
     url = ""
     headers = {}
@@ -445,7 +445,7 @@ def find_text_bounds(page, target: str) -> list:
         
     return rects
 
-def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10, agent_name: str = "Antigravity", mode: str = "cli", api_llm: str = "", api_model: str = ""):
+def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10, agent_name: str = "Antigravity", mode: str = "cli", api_llm: str = "", api_model: str = "", report_path: str = "", do_spelling: bool = True, do_dictamen: bool = True):
     """
     Abre el PDF de entrada, analiza errores por página usando el CLI seleccionado,
     agrega anotaciones al PDF copia y guarda el resultado.
@@ -473,102 +473,108 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
             all_pages_text.append(f"--- PÁGINA {page_num + 1} ---\n{page_text}")
     full_text = "\n\n".join(all_pages_text)
     
-    # Diccionario para guardar los errores detectados por página
-    page_errors = {}
-    
-    def procesar_pagina(page_index: int):
-        page_text = doc[page_index].get_text("text").strip()
-        if not page_text:
-            return page_index, []
-        print(f"Lanzando revisión de Página {page_index + 1}...")
-        if mode == "api":
-            errs = run_agent_api(page_text, api_llm, api_model)
-        else:
-            errs = run_agent_cli(page_text, page_index + 1, agent_name)
-        return page_index, errs
-
-    print(f"\n--- Analizando ortografía en paralelo ({num_agents} instancias) ---")
-    with concurrent.futures.ThreadPoolExecutor(max_workers=num_agents) as executor:
-        futures = {executor.submit(procesar_pagina, i): i for i in range(total_paginas)}
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                page_index, errs = future.result()
-                page_errors[page_index] = errs
-                print(f"✓ Página {page_index + 1} completada ({len(errs)} errores).")
-            except Exception as exc:
-                print(f"La página generó una excepción: {exc}", file=sys.stderr)
-
-    print("\n--- Aplicando anotaciones al PDF ---")
-    for page_num in range(total_paginas):
-        page = doc[page_num]
-        errors = page_errors.get(page_num, [])
+    if do_spelling:
+        # Diccionario para guardar los errores detectados por página
+        page_errors = {}
         
-        if not errors:
-            continue
-            
-        for err in errors:
-            original = err.get("original", "").strip()
-            corregido = err.get("corregido", "").strip()
-            tipo = err.get("tipo", "ortografía").strip()
-            explicacion = err.get("explicacion", "").strip()
-            
-            if not original:
-                continue
-                
-            err_key = original.lower()
-            
-            # --- EVITAR REPETIR ERRORES (REQUERIMIENTO CLAVE) ---
-            if err_key in seen_errors_global:
-                print(f"  [DEDUPLICADO Pág {page_num + 1}] Se omitió el error '{original}' porque ya fue marcado anteriormente.")
-                continue
-                
-            seen_errors_global.add(err_key)
-            total_errores_detectados += 1
-            
-            # Buscar la ubicación del error en la página
-            rects = find_text_bounds(page, original)
-            
-            if not rects:
-                print(f"  [AVISO Pág {page_num + 1}] No se encontraron coordenadas exactas para la palabra '{original}' en el PDF.")
-                continue
-                
-            print(f"  [ERROR Pág {page_num + 1}] '{original}' -> '{corregido}' ({tipo})")
-            
-            for rect in rects:
-                highlight = page.add_highlight_annot(rect)
-                contenido_comentario = (
-                    f"Tipo: {tipo.capitalize()}\n"
-                    f"Corrección sugerida: {corregido}\n"
-                    f"Detalle: {explicacion}"
-                )
-                highlight.set_info(
-                    title="Quirón",
-                    subject=f"Error de {tipo}",
-                    content=contenido_comentario
-                )
-                highlight.set_colors(stroke=(1.0, 0.8, 0.0))
-                highlight.update()
-                total_anotaciones_creadas += 1
+        def procesar_pagina(page_index: int):
+            page_text = doc[page_index].get_text("text").strip()
+            if not page_text:
+                return page_index, []
+            print(f"Lanzando revisión de Página {page_index + 1}...")
+            if mode == "api":
+                errs = run_agent_api(page_text, api_llm, api_model)
+            else:
+                errs = run_agent_cli(page_text, page_index + 1, agent_name)
+            return page_index, errs
 
-    # --- REVISIÓN DE CONTENIDO (DOCTOR EN MECATRÓNICA) ---
-    agent_display = f"{api_llm} ({api_model})" if mode == "api" else agent_name
-    print(f"\n--- Iniciando revisión de contenido global usando {agent_display} ---")
-    
-    print("Enviando el documento completo para revisión de contenido (esto puede tardar unos momentos)...")
-    if mode == "api":
-        revision_contenido = run_content_review_api(full_text, api_llm, api_model)
-    else:
-        revision_contenido = run_content_review_cli(full_text, agent_name)
-    
+        print(f"\n--- Analizando ortografía en paralelo ({num_agents} instancias) ---")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_agents) as executor:
+            futures = {executor.submit(procesar_pagina, i): i for i in range(total_paginas)}
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    page_index, errs = future.result()
+                    page_errors[page_index] = errs
+                    print(f"✓ Página {page_index + 1} completada ({len(errs)} errores).")
+                except Exception as exc:
+                    print(f"La página generó una excepción: {exc}", file=sys.stderr)
+
+        print("\n--- Aplicando anotaciones al PDF ---")
+        for page_num in range(total_paginas):
+            page = doc[page_num]
+            errors = page_errors.get(page_num, [])
+            
+            if not errors:
+                continue
+                
+            for err in errors:
+                original = err.get("original", "").strip()
+                corregido = err.get("corregido", "").strip()
+                tipo = err.get("tipo", "ortografía").strip()
+                explicacion = err.get("explicacion", "").strip()
+                
+                if not original:
+                    continue
+                    
+                err_key = original.lower()
+                
+                # --- EVITAR REPETIR ERRORES (REQUERIMIENTO CLAVE) ---
+                if err_key in seen_errors_global:
+                    print(f"  [DEDUPLICADO Pág {page_num + 1}] Se omitió el error '{original}' porque ya fue marcado anteriormente.")
+                    continue
+                    
+                seen_errors_global.add(err_key)
+                total_errores_detectados += 1
+                
+                # Buscar la ubicación del error en la página
+                rects = find_text_bounds(page, original)
+                
+                if not rects:
+                    print(f"  [AVISO Pág {page_num + 1}] No se encontraron coordenadas exactas para la palabra '{original}' en el PDF.")
+                    continue
+                    
+                print(f"  [ERROR Pág {page_num + 1}] '{original}' -> '{corregido}' ({tipo})")
+                
+                for rect in rects:
+                    highlight = page.add_highlight_annot(rect)
+                    contenido_comentario = (
+                        f"Tipo: {tipo.capitalize()}\n"
+                        f"Corrección sugerida: {corregido}\n"
+                        f"Detalle: {explicacion}"
+                    )
+                    highlight.set_info(
+                        title="Quirón",
+                        subject=f"Error de {tipo}",
+                        content=contenido_comentario
+                    )
+                    highlight.set_colors(stroke=(1.0, 0.8, 0.0))
+                    highlight.update()
+                    total_anotaciones_creadas += 1
+
     txt_output_path = ""
-    if revision_contenido:
-        base, _ = os.path.splitext(input_path)
-        txt_output_path = f"{base}_revision_contenido.txt"
-        with open(txt_output_path, "w", encoding="utf-8") as f:
-            f.write(revision_contenido)
-        print(f"Revisión de contenido guardada exitosamente en: {txt_output_path}")
-    else:
-        print("No se pudo obtener la revisión de contenido.")
+    if do_dictamen:
+        # --- REVISIÓN DE CONTENIDO (DICTAMEN ACADÉMICO) ---
+        agent_display = f"{api_llm} ({api_model})" if mode == "api" else agent_name
+        print(f"\n--- Iniciando revisión de contenido global usando {agent_display} ---")
+        
+        print("Enviando el documento completo para revisión de contenido (esto puede tardar unos momentos)...")
+        if mode == "api":
+            revision_contenido = run_content_review_api(full_text, api_llm, api_model)
+        else:
+            revision_contenido = run_content_review_cli(full_text, agent_name)
+        
+        if revision_contenido:
+            if report_path:
+                txt_output_path = report_path
+            else:
+                base, _ = os.path.splitext(input_path)
+                txt_output_path = f"{base}_revision_contenido.txt"
+                
+            with open(txt_output_path, "w", encoding="utf-8") as f:
+                f.write(revision_contenido)
+            print(f"Revisión de contenido guardada exitosamente en: {txt_output_path}")
+        else:
+            print("No se pudo obtener la revisión de contenido.")
 
     # Guardar el PDF copia con las anotaciones
     print(f"\nGuardando PDF corregido en: {output_path}...")
@@ -611,10 +617,24 @@ def main():
         help="Número de hilos a ejecutar en paralelo. Por defecto es 10."
     )
     parser.add_argument(
+        "-r", "--report-output",
+        help="Ruta donde se guardará el reporte de revisión de contenido (txt). Opcional."
+    )
+    parser.add_argument(
         "--agent-cli",
         choices=["Antigravity", "GitHub CLI", "Claude Code"],
         default="Antigravity",
         help="CLI a utilizar para la corrección."
+    )
+    parser.add_argument(
+        "--skip-spelling",
+        action="store_true",
+        help="Omite la corrección ortográfica."
+    )
+    parser.add_argument(
+        "--skip-dictamen",
+        action="store_true",
+        help="Omite la generación del dictamen académico."
     )
     
     args = parser.parse_args()
@@ -627,7 +647,11 @@ def main():
         # Sobrescribir el archivo original
         output_path = input_path
         
-    corregir_reporte_pdf(input_path, output_path, args.agents, args.agent_cli)
+    report_output_path = ""
+    if args.report_output:
+        report_output_path = os.path.abspath(args.report_output)
+        
+    corregir_reporte_pdf(input_path, output_path, args.agents, args.agent_cli, report_path=report_output_path, do_spelling=not args.skip_spelling, do_dictamen=not args.skip_dictamen)
 
 if __name__ == "__main__":
     main()
