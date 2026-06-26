@@ -45,6 +45,14 @@ DEFAULT_DICTAMEN_PROMPT = (
     "Tu respuesta debe estar en texto claro, estructurado y profesional."
 )
 
+DEFAULT_GUIDE_PROMPT = (
+    "Eres un Verificador de Formato y Lineamientos Académicos. "
+    "Tu tarea es comparar el texto de un documento (tesis/memoria) contra un manual o guía de lineamientos proporcionado. "
+    "Verifica si el documento cumple con la estructura, las reglas de formato, los apartados requeridos y demás exigencias descritas en la guía. "
+    "Enumera los hallazgos: qué se cumple, qué falta y qué áreas deben corregirse para alinear el documento a la guía. "
+    "Proporciona un reporte estructurado y profesional."
+)
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROMPTS_FILE = os.path.join(BASE_DIR, "prompts.json")
 
@@ -53,10 +61,14 @@ def load_prompts():
         try:
             with open(PROMPTS_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return data.get("system_personality", DEFAULT_SYSTEM_PERSONALITY), data.get("dictamen_prompt", DEFAULT_DICTAMEN_PROMPT)
+                return (
+                    data.get("system_personality", DEFAULT_SYSTEM_PERSONALITY), 
+                    data.get("dictamen_prompt", DEFAULT_DICTAMEN_PROMPT),
+                    data.get("guide_prompt", DEFAULT_GUIDE_PROMPT)
+                )
         except Exception:
             pass
-    return DEFAULT_SYSTEM_PERSONALITY, DEFAULT_DICTAMEN_PROMPT
+    return DEFAULT_SYSTEM_PERSONALITY, DEFAULT_DICTAMEN_PROMPT, DEFAULT_GUIDE_PROMPT
 
 def run_agent_cli(text_content: str, page_num: int, agent: str = "Antigravity") -> list:
     """
@@ -64,7 +76,7 @@ def run_agent_cli(text_content: str, page_num: int, agent: str = "Antigravity") 
     Devuelve la lista de errores encontrados.
     """
     try:
-        system_personality, _ = load_prompts()
+        system_personality, _, _ = load_prompts()
         system_prompt = f"{system_personality}\n\n{SYSTEM_PROMPT_JSON_INSTRUCTIONS}"
         text_file_path = os.path.abspath(f"temp_page_{page_num}.txt")
         json_file_path = os.path.abspath(f"temp_errores_{page_num}.json")
@@ -162,7 +174,7 @@ def run_content_review_cli(text_content: str, agent: str = "Antigravity") -> str
     leyendo y escribiendo en archivos para evitar problemas de longitud.
     """
     try:
-        _, dictamen_prompt = load_prompts()
+        _, dictamen_prompt, _ = load_prompts()
         text_file_path = os.path.abspath("temp_revision_contenido.txt")
         output_file_path = os.path.abspath("temp_revision_resultado.txt")
         
@@ -211,12 +223,68 @@ def run_content_review_cli(text_content: str, agent: str = "Antigravity") -> str
         
     return ""
 
+def run_guide_review_cli(full_text: str, guide_text: str, agent: str = "Antigravity") -> str:
+    """
+    Ejecuta el agente para una verificación de guía usando el guide_prompt.
+    """
+    try:
+        _, _, guide_prompt = load_prompts()
+        text_file_path = os.path.abspath("temp_verificacion_guia.txt")
+        output_file_path = os.path.abspath("temp_guia_resultado.txt")
+        
+        content_to_write = f"=== GUÍA / MANUAL ===\n{guide_text}\n\n=== DOCUMENTO A REVISAR ===\n{full_text}"
+        
+        with open(text_file_path, "w", encoding="utf-8") as f:
+            f.write(content_to_write)
+            
+        prompt = (
+            f"{guide_prompt}\n\n"
+            f"El documento completo y la guía se encuentran en el archivo: {text_file_path}\n"
+            f"Lee ese archivo, realiza tu verificación y GUARDA el reporte resultante en el archivo: {output_file_path}\n"
+            "Asegúrate de escribir el resultado en esa ruta."
+        )
+        
+        prompt_str = prompt.strip()
+        if agent == "GitHub CLI":
+            cmd = ["gh", "copilot", "explain", prompt_str]
+        elif agent == "Claude Code":
+            cmd = ["claude", "-p", prompt_str]
+        else:
+            cmd = ["agy", "-p", prompt_str]
+        
+        subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="ignore"
+        )
+        
+        revision = ""
+        if os.path.exists(output_file_path):
+            with open(output_file_path, "r", encoding="utf-8") as f:
+                revision = f.read().strip()
+                
+        # Limpiar
+        try:
+            if os.path.exists(text_file_path): os.remove(text_file_path)
+            if os.path.exists(output_file_path): os.remove(output_file_path)
+        except Exception:
+            pass
+            
+        return revision
+            
+    except Exception as e:
+        print(f"Ocurrió un error inesperado al invocar {agent} para verificación de guía: {e}", file=sys.stderr)
+        
+    return ""
+
 
 def run_agent_api(text_content: str, api_llm: str, api_model: str) -> list:
     """
     Ejecuta el agente utilizando llamadas directas a la API del proveedor seleccionado.
     """
-    system_personality, _ = load_prompts()
+    system_personality, _, _ = load_prompts()
     system_prompt = f"{system_personality}\n\n{SYSTEM_PROMPT_JSON_INSTRUCTIONS}"
     prompt = f"{system_prompt}\n\nEl texto a analizar es el siguiente:\n\n{text_content}"
     
@@ -335,7 +403,7 @@ def run_content_review_api(text_content: str, api_llm: str, api_model: str) -> s
     """
     Ejecuta el agente para revisión de contenido utilizando la API directa.
     """
-    _, dictamen_prompt = load_prompts()
+    _, dictamen_prompt, _ = load_prompts()
     prompt = f"{dictamen_prompt}\n\nEl documento completo es el siguiente:\n\n{text_content}"
     
     url = ""
@@ -413,6 +481,88 @@ def run_content_review_api(text_content: str, api_llm: str, api_model: str) -> s
         
     return ""
 
+def run_guide_review_api(full_text: str, guide_text: str, api_llm: str, api_model: str) -> str:
+    """
+    Ejecuta el agente para verificación de guía utilizando la API directa.
+    """
+    _, _, guide_prompt = load_prompts()
+    prompt = f"{guide_prompt}\n\n=== GUÍA / MANUAL ===\n{guide_text}\n\n=== DOCUMENTO A REVISAR ===\n{full_text}"
+    
+    url = ""
+    headers = {}
+    payload = {}
+    
+    try:
+        if api_llm == "ChatGPT":
+            api_key = os.environ.get("OPENAI_API_KEY", "")
+            url = "https://api.openai.com/v1/chat/completions"
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            payload = {
+                "model": api_model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.3
+            }
+        elif api_llm == "Gemini":
+            api_key = os.environ.get("GEMINI_API_KEY", "")
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{api_model}:generateContent?key={api_key}"
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.3}
+            }
+        elif api_llm == "Claude":
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            url = "https://api.anthropic.com/v1/messages"
+            headers = {
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json"
+            }
+            payload = {
+                "model": api_model,
+                "max_tokens": 4096,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.3
+            }
+        elif api_llm == "Grok":
+            api_key = os.environ.get("XAI_API_KEY", "")
+            url = "https://api.x.ai/v1/chat/completions"
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            payload = {
+                "model": api_model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.3
+            }
+        else:
+            return ""
+
+        max_retries = 10
+        base_delay = 5
+        for attempt in range(max_retries):
+            response = requests.post(url, headers=headers, json=payload)
+            if response.status_code in [429, 500, 502, 503, 504]:
+                delay = base_delay * (2 ** attempt) + random.uniform(1, 5)
+                print(f"  [AVISO] HTTP {response.status_code} por {api_llm}. Reintentando en {delay:.1f}s...", file=sys.stderr)
+                time.sleep(delay)
+                continue
+            response.raise_for_status()
+            break
+        else:
+            response.raise_for_status()
+        data = response.json()
+        
+        if api_llm in ["ChatGPT", "Grok"]:
+            return data["choices"][0]["message"]["content"].strip()
+        elif api_llm == "Gemini":
+            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        elif api_llm == "Claude":
+            return data["content"][0]["text"].strip()
+            
+    except Exception as e:
+        print(f"Ocurrió un error al invocar {api_llm} para verificación de guía: {e}", file=sys.stderr)
+        
+    return ""
+
 def find_text_bounds(page, target: str) -> list:
     """
     Busca una palabra o frase en la página del PDF y devuelve sus rectángulos.
@@ -445,7 +595,7 @@ def find_text_bounds(page, target: str) -> list:
         
     return rects
 
-def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10, agent_name: str = "Antigravity", mode: str = "cli", api_llm: str = "", api_model: str = "", report_path: str = "", do_spelling: bool = True, do_dictamen: bool = True):
+def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10, agent_name: str = "Antigravity", mode: str = "cli", api_llm: str = "", api_model: str = "", report_path: str = "", do_spelling: bool = True, do_dictamen: bool = True, do_guide: bool = False, guide_path: str = ""):
     """
     Abre el PDF de entrada, analiza errores por página usando el CLI seleccionado,
     agrega anotaciones al PDF copia y guarda el resultado.
@@ -576,6 +726,37 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
         else:
             print("No se pudo obtener la revisión de contenido.")
 
+    if do_guide and guide_path and os.path.exists(guide_path):
+        print(f"\n--- Iniciando extracción de texto de la guía: {guide_path} ---")
+        try:
+            guide_doc = pymupdf.open(guide_path)
+            guide_pages_text = []
+            for i in range(len(guide_doc)):
+                gt = guide_doc[i].get_text("text").strip()
+                if gt:
+                    guide_pages_text.append(gt)
+            guide_full_text = "\n\n".join(guide_pages_text)
+            guide_doc.close()
+            
+            agent_display = f"{api_llm} ({api_model})" if mode == "api" else agent_name
+            print(f"--- Iniciando verificación de guía usando {agent_display} ---")
+            
+            if mode == "api":
+                verificacion_guia = run_guide_review_api(full_text, guide_full_text, api_llm, api_model)
+            else:
+                verificacion_guia = run_guide_review_cli(full_text, guide_full_text, agent_name)
+                
+            if verificacion_guia:
+                base, _ = os.path.splitext(input_path)
+                guia_output_path = f"{base}_verificacion_guia.txt"
+                with open(guia_output_path, "w", encoding="utf-8") as f:
+                    f.write(verificacion_guia)
+                print(f"Verificación de guía guardada exitosamente en: {guia_output_path}")
+            else:
+                print("No se pudo obtener la verificación de guía.")
+        except Exception as e:
+            print(f"Error al procesar la guía: {e}", file=sys.stderr)
+
     # Guardar el PDF copia con las anotaciones
     print(f"\nGuardando PDF corregido en: {output_path}...")
     if os.path.abspath(input_path) == os.path.abspath(output_path):
@@ -621,6 +802,10 @@ def main():
         help="Ruta donde se guardará el reporte de revisión de contenido (txt). Opcional."
     )
     parser.add_argument(
+        "-g", "--guide",
+        help="Ruta al PDF de la guía/manual para verificar el cumplimiento. Opcional."
+    )
+    parser.add_argument(
         "--agent-cli",
         choices=["Antigravity", "GitHub CLI", "Claude Code"],
         default="Antigravity",
@@ -651,7 +836,11 @@ def main():
     if args.report_output:
         report_output_path = os.path.abspath(args.report_output)
         
-    corregir_reporte_pdf(input_path, output_path, args.agents, args.agent_cli, report_path=report_output_path, do_spelling=not args.skip_spelling, do_dictamen=not args.skip_dictamen)
+    guide_path = ""
+    if args.guide:
+        guide_path = os.path.abspath(args.guide)
+        
+    corregir_reporte_pdf(input_path, output_path, args.agents, args.agent_cli, report_path=report_output_path, do_spelling=not args.skip_spelling, do_dictamen=not args.skip_dictamen, do_guide=bool(guide_path), guide_path=guide_path)
 
 if __name__ == "__main__":
     main()

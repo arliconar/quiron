@@ -42,10 +42,12 @@ class QuironGUI:
         
         self.input_file = tk.StringVar()
         self.report_file = tk.StringVar()
+        self.guide_file = tk.StringVar()
         self.agents_var = tk.IntVar(value=10)
         self.overwrite_var = tk.BooleanVar(value=False)
         self.do_spelling_var = tk.BooleanVar(value=True)
         self.do_dictamen_var = tk.BooleanVar(value=True)
+        self.do_guide_var = tk.BooleanVar(value=True)
         self.mode_var = tk.StringVar(value="cli") # 'cli' o 'api'
         self.agent_var = tk.StringVar(value="Antigravity")
         
@@ -133,6 +135,12 @@ class QuironGUI:
         self.report_entry.grid(row=1, column=1, padx=5, pady=5)
         
         ttk.Button(file_frame, text="Buscar Destino...", command=self.browse_report).grid(row=1, column=2, padx=5, pady=5)
+
+        ttk.Label(file_frame, text="Guía / Manual (PDF, opcional):").grid(row=2, column=0, sticky=tk.W, pady=5)
+        self.guide_entry = ttk.Entry(file_frame, textvariable=self.guide_file, state='readonly', width=55)
+        self.guide_entry.grid(row=2, column=1, padx=5, pady=5)
+        
+        ttk.Button(file_frame, text="Buscar Guía...", command=self.browse_guide).grid(row=2, column=2, padx=5, pady=5)
         
         # --- Sección 2: Opciones de Corrección ---
         options_frame = ttk.LabelFrame(main_frame, text="2. Opciones de Ejecución", padding="10")
@@ -144,6 +152,7 @@ class QuironGUI:
         tasks_frame.grid(row=0, column=1, sticky=tk.W, pady=5)
         ttk.Checkbutton(tasks_frame, text="Corrección Ortográfica", variable=self.do_spelling_var).pack(side=tk.LEFT, padx=5)
         ttk.Checkbutton(tasks_frame, text="Dictamen Académico", variable=self.do_dictamen_var).pack(side=tk.LEFT, padx=5)
+        ttk.Checkbutton(tasks_frame, text="Verificación de Guía", variable=self.do_guide_var).pack(side=tk.LEFT, padx=5)
         
         # Agentes y Modo
         ttk.Label(options_frame, text="Modo de Ejecución:").grid(row=1, column=0, sticky=tk.W, pady=5)
@@ -242,6 +251,14 @@ class QuironGUI:
         if file_path:
             self.report_file.set(file_path)
 
+    def browse_guide(self):
+        file_path = filedialog.askopenfilename(
+            title="Seleccionar Guía o Manual (PDF)",
+            filetypes=[("Archivos PDF", "*.pdf")]
+        )
+        if file_path:
+            self.guide_file.set(file_path)
+
     def login_antigravity(self):
         if os.name == 'nt':
             os.system('start cmd /k "agy --help"')
@@ -256,32 +273,45 @@ class QuironGUI:
         
         try:
             from corrector import load_prompts
-            system_personality, dictamen_prompt = load_prompts()
+            prompts = load_prompts()
+            if len(prompts) == 3:
+                system_personality, dictamen_prompt, guide_prompt = prompts
+            else:
+                system_personality, dictamen_prompt = prompts
+                guide_prompt = ""
         except ImportError:
-            system_personality, dictamen_prompt = "", ""
+            system_personality, dictamen_prompt, guide_prompt = "", "", ""
             
         main_frame = ttk.Frame(editor, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
         
         # Corrector Prompt
         ttk.Label(main_frame, text="Personalidad del Corrector Ortográfico:", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(0,5))
-        system_text = tk.Text(main_frame, height=12, wrap=tk.WORD, font=("Consolas", 10))
+        system_text = tk.Text(main_frame, height=8, wrap=tk.WORD, font=("Consolas", 10))
         system_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         system_text.insert(tk.END, system_personality)
         
         # Dictamen Prompt
         ttk.Label(main_frame, text="Prompt del Dictamen Académico (Revisión de Contenido):", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(0,5))
-        dictamen_text = tk.Text(main_frame, height=12, wrap=tk.WORD, font=("Consolas", 10))
+        dictamen_text = tk.Text(main_frame, height=8, wrap=tk.WORD, font=("Consolas", 10))
         dictamen_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         dictamen_text.insert(tk.END, dictamen_prompt)
+        
+        # Guide Prompt
+        ttk.Label(main_frame, text="Prompt del Verificador de Guía/Manual:", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(0,5))
+        guide_text = tk.Text(main_frame, height=8, wrap=tk.WORD, font=("Consolas", 10))
+        guide_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        guide_text.insert(tk.END, guide_prompt)
         
         def save_prompts():
             new_system = system_text.get("1.0", tk.END).strip()
             new_dictamen = dictamen_text.get("1.0", tk.END).strip()
+            new_guide = guide_text.get("1.0", tk.END).strip()
             
             prompts_data = {
                 "system_personality": new_system,
-                "dictamen_prompt": new_dictamen
+                "dictamen_prompt": new_dictamen,
+                "guide_prompt": new_guide
             }
             
             try:
@@ -309,9 +339,9 @@ class QuironGUI:
             self.console_text.config(state=tk.DISABLED)
         self.root.after(100, self.process_queue)
 
-    def run_correction_thread(self, input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen):
+    def run_correction_thread(self, input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path):
         try:
-            corregir_reporte_pdf(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen)
+            corregir_reporte_pdf(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path)
             self.msg_queue.put("\n>>> PROCESO FINALIZADO CON ÉXITO <<<\n")
             messagebox.showinfo("Completado", "El reporte ha sido corregido exitosamente.")
         except Exception as e:
@@ -380,16 +410,22 @@ class QuironGUI:
         self.msg_queue.put(f"Archivo salida: {output_path}\n")
         
         report_path = self.report_file.get()
+        guide_path = self.guide_file.get()
         do_spelling = self.do_spelling_var.get()
         do_dictamen = self.do_dictamen_var.get()
+        do_guide = self.do_guide_var.get()
         
-        if not do_spelling and not do_dictamen:
+        if not do_spelling and not do_dictamen and not do_guide:
             self.msg_queue.put("No se seleccionó ninguna tarea a realizar.\n")
             self.run_button.config(state=tk.NORMAL)
             return
             
+        if do_guide and not guide_path:
+            self.msg_queue.put("AVISO: Tarea de Verificación de Guía ignorada por no seleccionar archivo de Guía.\n")
+            do_guide = False
+            
         # Lanzar el hilo
-        thread = threading.Thread(target=self.run_correction_thread, args=(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen))
+        thread = threading.Thread(target=self.run_correction_thread, args=(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path))
         thread.daemon = True
         thread.start()
 
