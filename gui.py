@@ -285,20 +285,70 @@ class QuironGUI:
         main_frame = ttk.Frame(editor, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
         
+        def load_txt_to_widget(text_widget):
+            file_path = filedialog.askopenfilename(
+                title="Seleccionar archivo de Prompt (TXT)",
+                filetypes=[("Archivos de Texto", "*.txt")]
+            )
+            if file_path:
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                    text_widget.delete("1.0", tk.END)
+                    text_widget.insert(tk.END, content)
+                except Exception as e:
+                    messagebox.showerror("Error", f"No se pudo cargar el archivo:\n{e}")
+
+        def save_widget_to_txt(text_widget):
+            file_path = filedialog.asksaveasfilename(
+                title="Guardar Prompt como (TXT)",
+                defaultextension=".txt",
+                filetypes=[("Archivos de Texto", "*.txt")]
+            )
+            if file_path:
+                try:
+                    content = text_widget.get("1.0", tk.END).strip()
+                    with open(file_path, "w", encoding="utf-8") as f:
+                        f.write(content)
+                    messagebox.showinfo("Guardado", f"El prompt se guardó correctamente en:\n{file_path}")
+                except Exception as e:
+                    messagebox.showerror("Error", f"No se pudo guardar el archivo:\n{e}")
+        
         # Corrector Prompt
-        ttk.Label(main_frame, text="Personalidad del Corrector Ortográfico:", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(0,5))
+        header_frame_1 = ttk.Frame(main_frame)
+        header_frame_1.pack(fill=tk.X, pady=(0,2))
+        ttk.Label(header_frame_1, text="Personalidad del Corrector Ortográfico:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
+        buttons_1 = ttk.Frame(header_frame_1)
+        buttons_1.pack(side=tk.RIGHT)
+        ttk.Button(buttons_1, text="Cargar TXT", command=lambda: load_txt_to_widget(system_text)).pack(side=tk.LEFT, padx=(0,5))
+        ttk.Button(buttons_1, text="Guardar TXT", command=lambda: save_widget_to_txt(system_text)).pack(side=tk.LEFT)
+        
         system_text = tk.Text(main_frame, height=8, wrap=tk.WORD, font=("Consolas", 10))
         system_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         system_text.insert(tk.END, system_personality)
         
         # Dictamen Prompt
-        ttk.Label(main_frame, text="Prompt del Dictamen Académico (Revisión de Contenido):", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(0,5))
+        header_frame_2 = ttk.Frame(main_frame)
+        header_frame_2.pack(fill=tk.X, pady=(0,2))
+        ttk.Label(header_frame_2, text="Prompt del Dictamen Académico (Revisión de Contenido):", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
+        buttons_2 = ttk.Frame(header_frame_2)
+        buttons_2.pack(side=tk.RIGHT)
+        ttk.Button(buttons_2, text="Cargar TXT", command=lambda: load_txt_to_widget(dictamen_text)).pack(side=tk.LEFT, padx=(0,5))
+        ttk.Button(buttons_2, text="Guardar TXT", command=lambda: save_widget_to_txt(dictamen_text)).pack(side=tk.LEFT)
+        
         dictamen_text = tk.Text(main_frame, height=8, wrap=tk.WORD, font=("Consolas", 10))
         dictamen_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         dictamen_text.insert(tk.END, dictamen_prompt)
         
         # Guide Prompt
-        ttk.Label(main_frame, text="Prompt del Verificador de Guía/Manual:", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(0,5))
+        header_frame_3 = ttk.Frame(main_frame)
+        header_frame_3.pack(fill=tk.X, pady=(0,2))
+        ttk.Label(header_frame_3, text="Prompt del Verificador de Guía/Manual:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
+        buttons_3 = ttk.Frame(header_frame_3)
+        buttons_3.pack(side=tk.RIGHT)
+        ttk.Button(buttons_3, text="Cargar TXT", command=lambda: load_txt_to_widget(guide_text)).pack(side=tk.LEFT, padx=(0,5))
+        ttk.Button(buttons_3, text="Guardar TXT", command=lambda: save_widget_to_txt(guide_text)).pack(side=tk.LEFT)
+        
         guide_text = tk.Text(main_frame, height=8, wrap=tk.WORD, font=("Consolas", 10))
         guide_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         guide_text.insert(tk.END, guide_prompt)
