@@ -48,6 +48,7 @@ class QuironGUI:
         self.do_spelling_var = tk.BooleanVar(value=True)
         self.do_dictamen_var = tk.BooleanVar(value=True)
         self.do_guide_var = tk.BooleanVar(value=True)
+        self.do_crossref_var = tk.BooleanVar(value=True)
         self.mode_var = tk.StringVar(value="cli") # 'cli' o 'api'
         self.agent_var = tk.StringVar(value="Antigravity")
         
@@ -153,6 +154,7 @@ class QuironGUI:
         ttk.Checkbutton(tasks_frame, text="Corrección Ortográfica", variable=self.do_spelling_var).pack(side=tk.LEFT, padx=5)
         ttk.Checkbutton(tasks_frame, text="Dictamen Académico", variable=self.do_dictamen_var).pack(side=tk.LEFT, padx=5)
         ttk.Checkbutton(tasks_frame, text="Verificación de Guía", variable=self.do_guide_var).pack(side=tk.LEFT, padx=5)
+        ttk.Checkbutton(tasks_frame, text="Ref. Cruzadas", variable=self.do_crossref_var).pack(side=tk.LEFT, padx=5)
         
         # Agentes y Modo
         ttk.Label(options_frame, text="Modo de Ejecución:").grid(row=1, column=0, sticky=tk.W, pady=5)
@@ -389,9 +391,9 @@ class QuironGUI:
             self.console_text.config(state=tk.DISABLED)
         self.root.after(100, self.process_queue)
 
-    def run_correction_thread(self, input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path):
+    def run_correction_thread(self, input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path, do_crossref):
         try:
-            corregir_reporte_pdf(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path)
+            corregir_reporte_pdf(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path, do_crossref)
             self.msg_queue.put("\n>>> PROCESO FINALIZADO CON ÉXITO <<<\n")
             messagebox.showinfo("Completado", "El reporte ha sido corregido exitosamente.")
         except Exception as e:
@@ -465,7 +467,9 @@ class QuironGUI:
         do_dictamen = self.do_dictamen_var.get()
         do_guide = self.do_guide_var.get()
         
-        if not do_spelling and not do_dictamen and not do_guide:
+        do_crossref = self.do_crossref_var.get()
+        
+        if not do_spelling and not do_dictamen and not do_guide and not do_crossref:
             self.msg_queue.put("No se seleccionó ninguna tarea a realizar.\n")
             self.run_button.config(state=tk.NORMAL)
             return
@@ -475,7 +479,7 @@ class QuironGUI:
             do_guide = False
             
         # Lanzar el hilo
-        thread = threading.Thread(target=self.run_correction_thread, args=(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path))
+        thread = threading.Thread(target=self.run_correction_thread, args=(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path, do_crossref))
         thread.daemon = True
         thread.start()
 

@@ -79,7 +79,6 @@ def run_agent_cli(text_content: str, page_num: int, agent: str = "Antigravity") 
         system_personality, _, _ = load_prompts()
         system_prompt = f"{system_personality}\n\n{SYSTEM_PROMPT_JSON_INSTRUCTIONS}"
         text_file_path = os.path.abspath(f"temp_page_{page_num}.txt")
-        json_file_path = os.path.abspath(f"temp_errores_{page_num}.json")
         
         with open(text_file_path, "w", encoding="utf-8") as f:
             f.write(text_content)
@@ -87,8 +86,8 @@ def run_agent_cli(text_content: str, page_num: int, agent: str = "Antigravity") 
         prompt = (
             f"{system_prompt}\n\n"
             f"El texto a analizar se encuentra en el archivo: {text_file_path}\n"
-            f"Lee ese archivo y GUARDA tu respuesta JSON en el archivo: {json_file_path}\n"
-            "Asegúrate de crear el archivo JSON en esa ruta y que su contenido sea únicamente el arreglo JSON."
+            "Lee ese archivo y devuelve únicamente tu respuesta en formato JSON.\n"
+            "Asegúrate de que tu respuesta sea únicamente el arreglo JSON, sin texto adicional."
         )
         
         prompt_str = prompt.strip()
@@ -97,10 +96,10 @@ def run_agent_cli(text_content: str, page_num: int, agent: str = "Antigravity") 
         elif agent == "Claude Code":
             cmd = ["claude", "-p", prompt_str]
         else: # Antigravity por defecto
-            cmd = ["agy", "-p", prompt_str]
+            cmd = ["agy", "--dangerously-skip-permissions", "-p", prompt_str]
         
         # Ejecutar el comando
-        subprocess.run(
+        result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
@@ -108,13 +107,10 @@ def run_agent_cli(text_content: str, page_num: int, agent: str = "Antigravity") 
             errors="ignore"
         )
         
-        # Parsear el archivo JSON generado
-        if not os.path.exists(json_file_path):
-            print(f"  [ERROR] El agente no generó el archivo {json_file_path}", file=sys.stderr)
+        response_text = result.stdout.strip()
+        if not response_text:
+            print(f"  [ERROR] El agente no generó respuesta en stdout. Error: {result.stderr}", file=sys.stderr)
             return []
-            
-        with open(json_file_path, "r", encoding="utf-8") as f:
-            response_text = f.read().strip()
             
         # Remover códigos ANSI por si acaso
         ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
@@ -156,7 +152,6 @@ def run_agent_cli(text_content: str, page_num: int, agent: str = "Antigravity") 
         # Limpiar archivos temporales
         try:
             if os.path.exists(text_file_path): os.remove(text_file_path)
-            if os.path.exists(json_file_path): os.remove(json_file_path)
         except Exception as e:
             print(f"  [AVISO] No se pudieron borrar archivos temporales: {e}", file=sys.stderr)
             
@@ -176,7 +171,6 @@ def run_content_review_cli(text_content: str, agent: str = "Antigravity") -> str
     try:
         _, dictamen_prompt, _ = load_prompts()
         text_file_path = os.path.abspath("temp_revision_contenido.txt")
-        output_file_path = os.path.abspath("temp_revision_resultado.txt")
         
         with open(text_file_path, "w", encoding="utf-8") as f:
             f.write(text_content)
@@ -184,8 +178,7 @@ def run_content_review_cli(text_content: str, agent: str = "Antigravity") -> str
         prompt = (
             f"{dictamen_prompt}\n\n"
             f"El documento completo se encuentra en el archivo: {text_file_path}\n"
-            f"Lee ese archivo, realiza tu revisión y GUARDA el reporte resultante en el archivo: {output_file_path}\n"
-            "Asegúrate de escribir el resultado en esa ruta."
+            "Lee ese archivo, realiza tu revisión y devuelve el reporte resultante como tu única respuesta."
         )
         
         prompt_str = prompt.strip()
@@ -194,9 +187,9 @@ def run_content_review_cli(text_content: str, agent: str = "Antigravity") -> str
         elif agent == "Claude Code":
             cmd = ["claude", "-p", prompt_str]
         else:
-            cmd = ["agy", "-p", prompt_str]
+            cmd = ["agy", "--dangerously-skip-permissions", "-p", prompt_str]
         
-        subprocess.run(
+        result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
@@ -204,15 +197,13 @@ def run_content_review_cli(text_content: str, agent: str = "Antigravity") -> str
             errors="ignore"
         )
         
-        revision = ""
-        if os.path.exists(output_file_path):
-            with open(output_file_path, "r", encoding="utf-8") as f:
-                revision = f.read().strip()
+        revision = result.stdout.strip()
+        if not revision:
+            print(f"  [ERROR] El agente no generó respuesta en stdout para revisión de contenido. Error: {result.stderr}", file=sys.stderr)
                 
         # Limpiar archivos temporales
         try:
             if os.path.exists(text_file_path): os.remove(text_file_path)
-            if os.path.exists(output_file_path): os.remove(output_file_path)
         except Exception as e:
             print(f"  [AVISO] No se pudieron borrar archivos temporales: {e}", file=sys.stderr)
             
@@ -230,7 +221,6 @@ def run_guide_review_cli(full_text: str, guide_text: str, agent: str = "Antigrav
     try:
         _, _, guide_prompt = load_prompts()
         text_file_path = os.path.abspath("temp_verificacion_guia.txt")
-        output_file_path = os.path.abspath("temp_guia_resultado.txt")
         
         content_to_write = f"=== GUÍA / MANUAL ===\n{guide_text}\n\n=== DOCUMENTO A REVISAR ===\n{full_text}"
         
@@ -240,8 +230,7 @@ def run_guide_review_cli(full_text: str, guide_text: str, agent: str = "Antigrav
         prompt = (
             f"{guide_prompt}\n\n"
             f"El documento completo y la guía se encuentran en el archivo: {text_file_path}\n"
-            f"Lee ese archivo, realiza tu verificación y GUARDA el reporte resultante en el archivo: {output_file_path}\n"
-            "Asegúrate de escribir el resultado en esa ruta."
+            "Lee ese archivo, realiza tu verificación y devuelve el reporte resultante como tu única respuesta."
         )
         
         prompt_str = prompt.strip()
@@ -250,9 +239,9 @@ def run_guide_review_cli(full_text: str, guide_text: str, agent: str = "Antigrav
         elif agent == "Claude Code":
             cmd = ["claude", "-p", prompt_str]
         else:
-            cmd = ["agy", "-p", prompt_str]
+            cmd = ["agy", "--dangerously-skip-permissions", "-p", prompt_str]
         
-        subprocess.run(
+        result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
@@ -260,15 +249,13 @@ def run_guide_review_cli(full_text: str, guide_text: str, agent: str = "Antigrav
             errors="ignore"
         )
         
-        revision = ""
-        if os.path.exists(output_file_path):
-            with open(output_file_path, "r", encoding="utf-8") as f:
-                revision = f.read().strip()
+        revision = result.stdout.strip()
+        if not revision:
+            print(f"  [ERROR] El agente no generó respuesta en stdout para verificación de guía. Error: {result.stderr}", file=sys.stderr)
                 
         # Limpiar
         try:
             if os.path.exists(text_file_path): os.remove(text_file_path)
-            if os.path.exists(output_file_path): os.remove(output_file_path)
         except Exception:
             pass
             
@@ -595,7 +582,7 @@ def find_text_bounds(page, target: str) -> list:
         
     return rects
 
-def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10, agent_name: str = "Antigravity", mode: str = "cli", api_llm: str = "", api_model: str = "", report_path: str = "", do_spelling: bool = True, do_dictamen: bool = True, do_guide: bool = False, guide_path: str = ""):
+def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10, agent_name: str = "Antigravity", mode: str = "cli", api_llm: str = "", api_model: str = "", report_path: str = "", do_spelling: bool = True, do_dictamen: bool = True, do_guide: bool = False, guide_path: str = "", do_crossref: bool = True):
     """
     Abre el PDF de entrada, analiza errores por página usando el CLI seleccionado,
     agrega anotaciones al PDF copia y guarda el resultado.
@@ -700,6 +687,63 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
                     highlight.set_colors(stroke=(1.0, 0.8, 0.0))
                     highlight.update()
                     total_anotaciones_creadas += 1
+
+    if do_crossref:
+        print("\n--- Verificando Referencias Cruzadas (Imágenes y Bibliografía) ---")
+        import re
+        figuras = set(re.findall(r'(Figura\s+\d+|Fig\.\s+\d+|Ilustración\s+\d+|Tabla\s+\d+|Cuadro\s+\d+)', full_text, re.IGNORECASE))
+        citas = set(re.findall(r'\[\d+\]', full_text))
+        
+        # 1. Detectar páginas de índice de figuras (suelen estar al principio y tener muchas menciones)
+        paginas_indice = set()
+        for page_num in range(min(total_paginas, max(10, int(total_paginas * 0.25)))):
+            page_text = doc[page_num].get_text("text").lower()
+            # Si se mencionan 4 o más figuras distintas, asumimos que es el índice
+            figuras_mencionadas = sum(1 for f in figuras if f.lower() in page_text)
+            if figuras_mencionadas >= 4:
+                paginas_indice.add(page_num)
+                
+        for fig in figuras:
+            # Contar ignorando el índice
+            conteo_real = 0
+            for page_num in range(total_paginas):
+                if page_num in paginas_indice:
+                    continue
+                conteo_real += doc[page_num].get_text("text").lower().count(fig.lower())
+                
+            if conteo_real <= 1:
+                print(f"  [AVISO] '{fig}' parece no estar referenciada en el texto (fuera del índice).")
+                for page_num in range(total_paginas):
+                    page = doc[page_num]
+                    rects = find_text_bounds(page, fig)
+                    for rect in rects:
+                        highlight = page.add_highlight_annot(rect)
+                        highlight.set_colors(stroke=(1.0, 0.5, 0.0))
+                        highlight.set_info(
+                            title="Quirón",
+                            subject="Falta Referencia",
+                            content=f"Advertencia: '{fig}' aparece aquí pero parece no tener referencia cruzada en el texto principal."
+                        )
+                        highlight.update()
+                        total_anotaciones_creadas += 1
+
+        for cita in citas:
+            conteo = full_text.count(cita)
+            if conteo == 1:
+                print(f"  [AVISO] La cita '{cita}' parece no estar referenciada en el texto.")
+                for page_num in range(total_paginas):
+                    page = doc[page_num]
+                    rects = find_text_bounds(page, cita)
+                    for rect in rects:
+                        highlight = page.add_highlight_annot(rect)
+                        highlight.set_colors(stroke=(1.0, 0.5, 0.0))
+                        highlight.set_info(
+                            title="Quirón",
+                            subject="Cita sin Uso",
+                            content=f"Advertencia: La cita '{cita}' aparece aquí pero parece no estar referenciada en el texto principal."
+                        )
+                        highlight.update()
+                        total_anotaciones_creadas += 1
 
     txt_output_path = ""
     if do_dictamen:
