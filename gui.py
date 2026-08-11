@@ -1,5 +1,6 @@
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import filedialog, messagebox
+import customtkinter as ctk
 import threading
 import sys
 import os
@@ -22,6 +23,9 @@ MODELS_JSON = {
     "Grok": ["grok-beta", "grok-2", "grok-2-mini"]
 }
 
+ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
+ctk.set_default_color_theme("blue")  # Themes: "blue" (standard), "green", "dark-blue"
+
 class StdoutRedirector:
     def __init__(self, text_widget, msg_queue):
         self.text_widget = text_widget
@@ -37,24 +41,24 @@ class QuironGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Quirón - Corrector de Reportes PDF")
-        self.root.geometry("680x680")
+        self.root.geometry("720x720")
         self.root.resizable(False, False)
         
-        self.input_file = tk.StringVar()
-        self.report_file = tk.StringVar()
-        self.guide_file = tk.StringVar()
-        self.agents_var = tk.IntVar(value=10)
-        self.overwrite_var = tk.BooleanVar(value=False)
-        self.do_spelling_var = tk.BooleanVar(value=True)
-        self.do_dictamen_var = tk.BooleanVar(value=True)
-        self.do_guide_var = tk.BooleanVar(value=True)
-        self.do_crossref_var = tk.BooleanVar(value=True)
-        self.mode_var = tk.StringVar(value="cli") # 'cli' o 'api'
-        self.agent_var = tk.StringVar(value="Antigravity")
+        self.input_file = ctk.StringVar()
+        self.report_file = ctk.StringVar()
+        self.guide_file = ctk.StringVar()
+        self.agents_var = ctk.IntVar(value=10)
+        self.overwrite_var = ctk.BooleanVar(value=False)
+        self.do_spelling_var = ctk.BooleanVar(value=True)
+        self.do_dictamen_var = ctk.BooleanVar(value=True)
+        self.do_guide_var = ctk.BooleanVar(value=True)
+        self.do_crossref_var = ctk.BooleanVar(value=True)
+        self.mode_var = ctk.StringVar(value="cli") # 'cli' o 'api'
+        self.agent_var = ctk.StringVar(value="Antigravity")
         
-        self.api_llm_var = tk.StringVar(value="ChatGPT")
-        self.api_model_var = tk.StringVar(value="gpt-4o-mini")
-        self.api_key_var = tk.StringVar()
+        self.api_llm_var = ctk.StringVar(value="ChatGPT")
+        self.api_model_var = ctk.StringVar(value="gpt-4o-mini")
+        self.api_key_var = ctk.StringVar()
         
         self.config_data = self.load_config()
         
@@ -112,128 +116,140 @@ class QuironGUI:
         
         # Actualizar modelos disponibles
         models = MODELS_JSON.get(llm, [])
-        self.api_model_combo['values'] = models
+        self.api_model_combo.configure(values=models)
         if models and self.api_model_var.get() not in models:
             self.api_model_var.set(models[0])
 
     def create_widgets(self):
         # Frame principal
-        main_frame = ttk.Frame(self.root, padding="15")
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        main_frame = ctk.CTkFrame(self.root, fg_color="transparent")
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
         
         # --- Sección 1: Selección de Archivo ---
-        file_frame = ttk.LabelFrame(main_frame, text="1. Selección de Archivos", padding="10")
-        file_frame.pack(fill=tk.X, pady=5)
+        file_frame = ctk.CTkFrame(main_frame)
+        file_frame.pack(fill=tk.X, pady=(0, 10))
         
-        ttk.Label(file_frame, text="Memoria (PDF):").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.file_entry = ttk.Entry(file_frame, textvariable=self.input_file, state='readonly', width=55)
-        self.file_entry.grid(row=0, column=1, padx=5, pady=5)
+        file_title = ctk.CTkLabel(file_frame, text="1. Selección de Archivos", font=ctk.CTkFont(size=14, weight="bold"))
+        file_title.grid(row=0, column=0, columnspan=3, sticky=tk.W, padx=10, pady=(10, 5))
         
-        ttk.Button(file_frame, text="Buscar PDF...", command=self.browse_file).grid(row=0, column=2, padx=5, pady=5)
+        ctk.CTkLabel(file_frame, text="Memoria (PDF):").grid(row=1, column=0, sticky=tk.W, padx=10, pady=5)
+        self.file_entry = ctk.CTkEntry(file_frame, textvariable=self.input_file, state='readonly', width=400)
+        self.file_entry.grid(row=1, column=1, padx=5, pady=5)
         
-        ttk.Label(file_frame, text="Dictamen Académico (opcional):").grid(row=1, column=0, sticky=tk.W, pady=5)
-        self.report_entry = ttk.Entry(file_frame, textvariable=self.report_file, state='readonly', width=55)
-        self.report_entry.grid(row=1, column=1, padx=5, pady=5)
+        ctk.CTkButton(file_frame, text="Buscar PDF...", command=self.browse_file, width=120).grid(row=1, column=2, padx=10, pady=5)
         
-        ttk.Button(file_frame, text="Buscar Destino...", command=self.browse_report).grid(row=1, column=2, padx=5, pady=5)
+        ctk.CTkLabel(file_frame, text="Dictamen Académico:").grid(row=2, column=0, sticky=tk.W, padx=10, pady=5)
+        self.report_entry = ctk.CTkEntry(file_frame, textvariable=self.report_file, state='readonly', width=400)
+        self.report_entry.grid(row=2, column=1, padx=5, pady=5)
+        
+        ctk.CTkButton(file_frame, text="Buscar Destino...", command=self.browse_report, width=120).grid(row=2, column=2, padx=10, pady=5)
 
-        ttk.Label(file_frame, text="Guía / Manual (PDF, opcional):").grid(row=2, column=0, sticky=tk.W, pady=5)
-        self.guide_entry = ttk.Entry(file_frame, textvariable=self.guide_file, state='readonly', width=55)
-        self.guide_entry.grid(row=2, column=1, padx=5, pady=5)
+        ctk.CTkLabel(file_frame, text="Guía / Manual (PDF):").grid(row=3, column=0, sticky=tk.W, padx=10, pady=(5, 10))
+        self.guide_entry = ctk.CTkEntry(file_frame, textvariable=self.guide_file, state='readonly', width=400)
+        self.guide_entry.grid(row=3, column=1, padx=5, pady=(5, 10))
         
-        ttk.Button(file_frame, text="Buscar Guía...", command=self.browse_guide).grid(row=2, column=2, padx=5, pady=5)
+        ctk.CTkButton(file_frame, text="Buscar Guía...", command=self.browse_guide, width=120).grid(row=3, column=2, padx=10, pady=(5, 10))
         
         # --- Sección 2: Opciones de Corrección ---
-        options_frame = ttk.LabelFrame(main_frame, text="2. Opciones de Ejecución", padding="10")
-        options_frame.pack(fill=tk.X, pady=5)
+        options_frame = ctk.CTkFrame(main_frame)
+        options_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        options_title = ctk.CTkLabel(options_frame, text="2. Opciones de Ejecución", font=ctk.CTkFont(size=14, weight="bold"))
+        options_title.grid(row=0, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(10, 5))
         
         # Tareas
-        ttk.Label(options_frame, text="Tareas:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        tasks_frame = ttk.Frame(options_frame)
-        tasks_frame.grid(row=0, column=1, sticky=tk.W, pady=5)
-        ttk.Checkbutton(tasks_frame, text="Corrección Ortográfica", variable=self.do_spelling_var).pack(side=tk.LEFT, padx=5)
-        ttk.Checkbutton(tasks_frame, text="Dictamen Académico", variable=self.do_dictamen_var).pack(side=tk.LEFT, padx=5)
-        ttk.Checkbutton(tasks_frame, text="Verificación de Guía", variable=self.do_guide_var).pack(side=tk.LEFT, padx=5)
-        ttk.Checkbutton(tasks_frame, text="Ref. Cruzadas", variable=self.do_crossref_var).pack(side=tk.LEFT, padx=5)
+        ctk.CTkLabel(options_frame, text="Tareas:").grid(row=1, column=0, sticky=tk.W, padx=10, pady=5)
+        tasks_frame = ctk.CTkFrame(options_frame, fg_color="transparent")
+        tasks_frame.grid(row=1, column=1, sticky=tk.W, pady=5)
+        ctk.CTkCheckBox(tasks_frame, text="Ortografía", variable=self.do_spelling_var).pack(side=tk.LEFT, padx=(0, 10))
+        ctk.CTkCheckBox(tasks_frame, text="Dictamen", variable=self.do_dictamen_var).pack(side=tk.LEFT, padx=(0, 10))
+        ctk.CTkCheckBox(tasks_frame, text="Verif. Guía", variable=self.do_guide_var).pack(side=tk.LEFT, padx=(0, 10))
+        ctk.CTkCheckBox(tasks_frame, text="Ref. Cruzadas", variable=self.do_crossref_var).pack(side=tk.LEFT, padx=(0, 10))
         
         # Agentes y Modo
-        ttk.Label(options_frame, text="Modo de Ejecución:").grid(row=1, column=0, sticky=tk.W, pady=5)
-        mode_frame = ttk.Frame(options_frame)
-        mode_frame.grid(row=1, column=1, sticky=tk.W, pady=5)
+        ctk.CTkLabel(options_frame, text="Modo:").grid(row=2, column=0, sticky=tk.W, padx=10, pady=5)
+        mode_frame = ctk.CTkFrame(options_frame, fg_color="transparent")
+        mode_frame.grid(row=2, column=1, sticky=tk.W, pady=5)
         
-        ttk.Radiobutton(mode_frame, text="CLI Local (agy, gh, claude)", variable=self.mode_var, value="cli", command=self.toggle_mode).pack(side=tk.LEFT, padx=5)
-        ttk.Radiobutton(mode_frame, text="API Directa (Tokens/Keys)", variable=self.mode_var, value="api", command=self.toggle_mode).pack(side=tk.LEFT, padx=5)
+        ctk.CTkRadioButton(mode_frame, text="CLI Local (agy, gh, claude)", variable=self.mode_var, value="cli", command=self.toggle_mode).pack(side=tk.LEFT, padx=(0, 10))
+        ctk.CTkRadioButton(mode_frame, text="API Directa", variable=self.mode_var, value="api", command=self.toggle_mode).pack(side=tk.LEFT, padx=(0, 10))
         
-        ttk.Label(options_frame, text="Hilos paralelos:").grid(row=2, column=0, sticky=tk.W, pady=5)
-        agents_spinbox = ttk.Spinbox(options_frame, from_=1, to=50, textvariable=self.agents_var, width=5)
-        agents_spinbox.grid(row=2, column=1, sticky=tk.W, padx=10)
+        ctk.CTkLabel(options_frame, text="Hilos paralelos:").grid(row=3, column=0, sticky=tk.W, padx=10, pady=5)
+        
+        agents_frame = ctk.CTkFrame(options_frame, fg_color="transparent")
+        agents_frame.grid(row=3, column=1, sticky=tk.W, pady=5)
+        self.agents_label = ctk.CTkLabel(agents_frame, text=f"{self.agents_var.get()}")
+        self.agents_label.pack(side=tk.LEFT, padx=(0, 5))
+        agents_slider = ctk.CTkSlider(agents_frame, from_=1, to=50, variable=self.agents_var, command=self.update_agents_label)
+        agents_slider.pack(side=tk.LEFT)
         
         # CLI Frame
-        self.cli_frame = ttk.Frame(options_frame)
-        ttk.Label(self.cli_frame, text="Agente CLI:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.agent_combo = ttk.Combobox(self.cli_frame, textvariable=self.agent_var, state='readonly', width=15)
-        self.agent_combo['values'] = ("Antigravity", "GitHub CLI", "Claude Code")
+        self.cli_frame = ctk.CTkFrame(options_frame, fg_color="transparent")
+        ctk.CTkLabel(self.cli_frame, text="Agente CLI:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.agent_combo = ctk.CTkComboBox(self.cli_frame, variable=self.agent_var, values=["Antigravity", "GitHub CLI", "Claude Code"], state='readonly', width=150)
         self.agent_combo.grid(row=0, column=1, sticky=tk.W, padx=10)
         
         # API Frame
-        self.api_frame = ttk.Frame(options_frame)
+        self.api_frame = ctk.CTkFrame(options_frame, fg_color="transparent")
         
-        ttk.Label(self.api_frame, text="Proveedor LLM:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.api_llm_combo = ttk.Combobox(self.api_frame, textvariable=self.api_llm_var, state='readonly', width=15)
-        self.api_llm_combo['values'] = list(MODELS_JSON.keys())
+        ctk.CTkLabel(self.api_frame, text="Proveedor LLM:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.api_llm_combo = ctk.CTkComboBox(self.api_frame, variable=self.api_llm_var, values=list(MODELS_JSON.keys()), state='readonly', width=150)
         self.api_llm_combo.grid(row=0, column=1, sticky=tk.W, padx=10)
         
-        ttk.Label(self.api_frame, text="Modelo:").grid(row=1, column=0, sticky=tk.W, pady=5)
-        self.api_model_combo = ttk.Combobox(self.api_frame, textvariable=self.api_model_var, state='readonly', width=25)
+        ctk.CTkLabel(self.api_frame, text="Modelo:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.api_model_combo = ctk.CTkComboBox(self.api_frame, variable=self.api_model_var, state='readonly', width=200)
         self.api_model_combo.grid(row=1, column=1, sticky=tk.W, padx=10)
         
-        ttk.Label(self.api_frame, text="API Key:").grid(row=2, column=0, sticky=tk.W, pady=5)
-        self.api_key_entry = ttk.Entry(self.api_frame, textvariable=self.api_key_var, show="*", width=35)
+        ctk.CTkLabel(self.api_frame, text="API Key:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        self.api_key_entry = ctk.CTkEntry(self.api_frame, textvariable=self.api_key_var, show="*", width=250)
         self.api_key_entry.grid(row=2, column=1, sticky=tk.W, padx=10)
         
         self.api_llm_var.trace_add('write', self.update_api_key_from_config)
         self.update_api_key_from_config()
         
         # Colocar frames dinámicos
-        self.cli_frame.grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=5)
-        self.api_frame.grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=5)
+        self.cli_frame.grid(row=4, column=0, columnspan=2, sticky=tk.W, padx=10, pady=5)
+        self.api_frame.grid(row=5, column=0, columnspan=2, sticky=tk.W, padx=10, pady=5)
         
         # Sobrescribir
-        ttk.Checkbutton(options_frame, text="Sobrescribir archivo original", variable=self.overwrite_var).grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=5)
+        ctk.CTkCheckBox(options_frame, text="Sobrescribir archivo original", variable=self.overwrite_var).grid(row=6, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(5, 10))
         
         # --- Sección 3: Acciones ---
-        action_frame = ttk.Frame(main_frame, padding="10")
-        action_frame.pack(fill=tk.X, pady=5)
+        action_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        action_frame.pack(fill=tk.X, pady=(0, 10))
         
-        self.run_button = ttk.Button(action_frame, text="Iniciar Corrección", command=self.start_correction)
+        self.run_button = ctk.CTkButton(action_frame, text="Iniciar Corrección", command=self.start_correction, font=ctk.CTkFont(weight="bold"))
         self.run_button.pack(side=tk.RIGHT, padx=5)
         
-        self.terminal_button = ttk.Button(action_frame, text="Terminal Antigravity (Opcional)", command=self.login_antigravity)
+        self.terminal_button = ctk.CTkButton(action_frame, text="Terminal Antigravity", command=self.login_antigravity, fg_color="gray30", hover_color="gray20")
         self.terminal_button.pack(side=tk.RIGHT, padx=5)
 
-        self.prompts_button = ttk.Button(action_frame, text="Editar Perfiles (Prompts)", command=self.open_prompts_editor)
+        self.prompts_button = ctk.CTkButton(action_frame, text="Editar Perfiles (Prompts)", command=self.open_prompts_editor, fg_color="gray30", hover_color="gray20")
         self.prompts_button.pack(side=tk.LEFT, padx=5)
         
         # --- Sección 4: Consola ---
-        console_frame = ttk.LabelFrame(main_frame, text="Consola de Progreso", padding="10")
-        console_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        console_frame = ctk.CTkFrame(main_frame)
+        console_frame.pack(fill=tk.BOTH, expand=True)
         
-        self.console_text = tk.Text(console_frame, height=15, wrap=tk.WORD, state=tk.DISABLED, bg="black", fg="white", font=("Consolas", 9))
-        self.console_text.pack(fill=tk.BOTH, expand=True)
+        console_title = ctk.CTkLabel(console_frame, text="Consola de Progreso", font=ctk.CTkFont(size=14, weight="bold"))
+        console_title.pack(anchor=tk.W, padx=10, pady=(10, 0))
         
-        scrollbar = ttk.Scrollbar(self.console_text, command=self.console_text.yview)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.console_text.config(yscrollcommand=scrollbar.set)
+        self.console_text = ctk.CTkTextbox(console_frame, wrap=tk.WORD, state=tk.DISABLED, font=("Consolas", 12))
+        self.console_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+    def update_agents_label(self, value):
+        self.agents_label.configure(text=f"{int(value)}")
+        self.agents_var.set(int(value))
 
     def toggle_mode(self):
         mode = self.mode_var.get()
         if mode == "cli":
             self.api_frame.grid_remove()
-            self.cli_frame.grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=5)
+            self.cli_frame.grid(row=4, column=0, columnspan=2, sticky=tk.W, padx=10, pady=5)
             self.terminal_button.pack(side=tk.RIGHT, padx=5)
         else:
             self.cli_frame.grid_remove()
-            self.api_frame.grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=5)
+            self.api_frame.grid(row=5, column=0, columnspan=2, sticky=tk.W, padx=10, pady=5)
             self.terminal_button.pack_forget()
 
     def browse_file(self):
@@ -268,10 +284,10 @@ class QuironGUI:
             self.msg_queue.put("Esta función abre la terminal solo en Windows.\n")
 
     def open_prompts_editor(self):
-        editor = tk.Toplevel(self.root)
+        editor = ctk.CTkToplevel(self.root)
         editor.title("Editar Perfiles (Prompts)")
-        editor.geometry("700x650")
-        editor.resizable(True, True)
+        editor.geometry("750x700")
+        editor.attributes("-topmost", True)
         
         try:
             from corrector import load_prompts
@@ -284,8 +300,8 @@ class QuironGUI:
         except ImportError:
             system_personality, dictamen_prompt, guide_prompt = "", "", ""
             
-        main_frame = ttk.Frame(editor, padding="10")
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        main_frame = ctk.CTkFrame(editor)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
         
         def load_txt_to_widget(text_widget):
             file_path = filedialog.askopenfilename(
@@ -317,42 +333,42 @@ class QuironGUI:
                     messagebox.showerror("Error", f"No se pudo guardar el archivo:\n{e}")
         
         # Corrector Prompt
-        header_frame_1 = ttk.Frame(main_frame)
-        header_frame_1.pack(fill=tk.X, pady=(0,2))
-        ttk.Label(header_frame_1, text="Personalidad del Corrector Ortográfico:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
-        buttons_1 = ttk.Frame(header_frame_1)
+        header_frame_1 = ctk.CTkFrame(main_frame, fg_color="transparent")
+        header_frame_1.pack(fill=tk.X, pady=(0,5))
+        ctk.CTkLabel(header_frame_1, text="Personalidad del Corrector Ortográfico:", font=ctk.CTkFont(weight="bold")).pack(side=tk.LEFT)
+        buttons_1 = ctk.CTkFrame(header_frame_1, fg_color="transparent")
         buttons_1.pack(side=tk.RIGHT)
-        ttk.Button(buttons_1, text="Cargar TXT", command=lambda: load_txt_to_widget(system_text)).pack(side=tk.LEFT, padx=(0,5))
-        ttk.Button(buttons_1, text="Guardar TXT", command=lambda: save_widget_to_txt(system_text)).pack(side=tk.LEFT)
+        ctk.CTkButton(buttons_1, text="Cargar TXT", width=100, command=lambda: load_txt_to_widget(system_text)).pack(side=tk.LEFT, padx=(0,5))
+        ctk.CTkButton(buttons_1, text="Guardar TXT", width=100, command=lambda: save_widget_to_txt(system_text)).pack(side=tk.LEFT)
         
-        system_text = tk.Text(main_frame, height=8, wrap=tk.WORD, font=("Consolas", 10))
-        system_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        system_text = ctk.CTkTextbox(main_frame, height=120, wrap=tk.WORD, font=("Consolas", 12))
+        system_text.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
         system_text.insert(tk.END, system_personality)
         
         # Dictamen Prompt
-        header_frame_2 = ttk.Frame(main_frame)
-        header_frame_2.pack(fill=tk.X, pady=(0,2))
-        ttk.Label(header_frame_2, text="Prompt del Dictamen Académico (Revisión de Contenido):", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
-        buttons_2 = ttk.Frame(header_frame_2)
+        header_frame_2 = ctk.CTkFrame(main_frame, fg_color="transparent")
+        header_frame_2.pack(fill=tk.X, pady=(0,5))
+        ctk.CTkLabel(header_frame_2, text="Prompt del Dictamen Académico:", font=ctk.CTkFont(weight="bold")).pack(side=tk.LEFT)
+        buttons_2 = ctk.CTkFrame(header_frame_2, fg_color="transparent")
         buttons_2.pack(side=tk.RIGHT)
-        ttk.Button(buttons_2, text="Cargar TXT", command=lambda: load_txt_to_widget(dictamen_text)).pack(side=tk.LEFT, padx=(0,5))
-        ttk.Button(buttons_2, text="Guardar TXT", command=lambda: save_widget_to_txt(dictamen_text)).pack(side=tk.LEFT)
+        ctk.CTkButton(buttons_2, text="Cargar TXT", width=100, command=lambda: load_txt_to_widget(dictamen_text)).pack(side=tk.LEFT, padx=(0,5))
+        ctk.CTkButton(buttons_2, text="Guardar TXT", width=100, command=lambda: save_widget_to_txt(dictamen_text)).pack(side=tk.LEFT)
         
-        dictamen_text = tk.Text(main_frame, height=8, wrap=tk.WORD, font=("Consolas", 10))
-        dictamen_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        dictamen_text = ctk.CTkTextbox(main_frame, height=120, wrap=tk.WORD, font=("Consolas", 12))
+        dictamen_text.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
         dictamen_text.insert(tk.END, dictamen_prompt)
         
         # Guide Prompt
-        header_frame_3 = ttk.Frame(main_frame)
-        header_frame_3.pack(fill=tk.X, pady=(0,2))
-        ttk.Label(header_frame_3, text="Prompt del Verificador de Guía/Manual:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
-        buttons_3 = ttk.Frame(header_frame_3)
+        header_frame_3 = ctk.CTkFrame(main_frame, fg_color="transparent")
+        header_frame_3.pack(fill=tk.X, pady=(0,5))
+        ctk.CTkLabel(header_frame_3, text="Prompt del Verificador de Guía/Manual:", font=ctk.CTkFont(weight="bold")).pack(side=tk.LEFT)
+        buttons_3 = ctk.CTkFrame(header_frame_3, fg_color="transparent")
         buttons_3.pack(side=tk.RIGHT)
-        ttk.Button(buttons_3, text="Cargar TXT", command=lambda: load_txt_to_widget(guide_text)).pack(side=tk.LEFT, padx=(0,5))
-        ttk.Button(buttons_3, text="Guardar TXT", command=lambda: save_widget_to_txt(guide_text)).pack(side=tk.LEFT)
+        ctk.CTkButton(buttons_3, text="Cargar TXT", width=100, command=lambda: load_txt_to_widget(guide_text)).pack(side=tk.LEFT, padx=(0,5))
+        ctk.CTkButton(buttons_3, text="Guardar TXT", width=100, command=lambda: save_widget_to_txt(guide_text)).pack(side=tk.LEFT)
         
-        guide_text = tk.Text(main_frame, height=8, wrap=tk.WORD, font=("Consolas", 10))
-        guide_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        guide_text = ctk.CTkTextbox(main_frame, height=120, wrap=tk.WORD, font=("Consolas", 12))
+        guide_text.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
         guide_text.insert(tk.END, guide_prompt)
         
         def save_prompts():
@@ -376,19 +392,19 @@ class QuironGUI:
             except Exception as e:
                 messagebox.showerror("Error", f"No se pudieron guardar los perfiles:\n{e}", parent=editor)
                 
-        btn_frame = ttk.Frame(main_frame)
-        btn_frame.pack(fill=tk.X, pady=5)
+        btn_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        btn_frame.pack(fill=tk.X, pady=10)
         
-        ttk.Button(btn_frame, text="Guardar", command=save_prompts).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(btn_frame, text="Cancelar", command=editor.destroy).pack(side=tk.RIGHT, padx=5)
+        ctk.CTkButton(btn_frame, text="Guardar", command=save_prompts, font=ctk.CTkFont(weight="bold")).pack(side=tk.RIGHT, padx=5)
+        ctk.CTkButton(btn_frame, text="Cancelar", command=editor.destroy, fg_color="gray30", hover_color="gray20").pack(side=tk.RIGHT, padx=5)
 
     def process_queue(self):
         while not self.msg_queue.empty():
             msg = self.msg_queue.get()
-            self.console_text.config(state=tk.NORMAL)
+            self.console_text.configure(state=tk.NORMAL)
             self.console_text.insert(tk.END, msg)
             self.console_text.see(tk.END)
-            self.console_text.config(state=tk.DISABLED)
+            self.console_text.configure(state=tk.DISABLED)
         self.root.after(100, self.process_queue)
 
     def run_correction_thread(self, input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path, do_crossref):
@@ -400,7 +416,7 @@ class QuironGUI:
             self.msg_queue.put(f"\n[ERROR CRÍTICO] {e}\n")
             messagebox.showerror("Error", f"Ocurrió un error inesperado:\n{e}")
         finally:
-            self.run_button.config(state=tk.NORMAL)
+            self.run_button.configure(state=tk.NORMAL)
 
     def start_correction(self):
         input_path = self.input_file.get()
@@ -448,11 +464,11 @@ class QuironGUI:
             base, ext = os.path.splitext(input_path)
             output_path = f"{base}_corregido{ext}"
             
-        self.console_text.config(state=tk.NORMAL)
+        self.console_text.configure(state=tk.NORMAL)
         self.console_text.delete(1.0, tk.END)
-        self.console_text.config(state=tk.DISABLED)
+        self.console_text.configure(state=tk.DISABLED)
         
-        self.run_button.config(state=tk.DISABLED)
+        self.run_button.configure(state=tk.DISABLED)
         if mode == "api":
             self.msg_queue.put(f"Iniciando proceso con {num_agents} hilos usando API de {api_llm} ({api_model})...\n")
         else:
@@ -471,7 +487,7 @@ class QuironGUI:
         
         if not do_spelling and not do_dictamen and not do_guide and not do_crossref:
             self.msg_queue.put("No se seleccionó ninguna tarea a realizar.\n")
-            self.run_button.config(state=tk.NORMAL)
+            self.run_button.configure(state=tk.NORMAL)
             return
             
         if do_guide and not guide_path:
@@ -484,6 +500,8 @@ class QuironGUI:
         thread.start()
 
 if __name__ == "__main__":
-    root = tk.Tk()
+    ctk.set_appearance_mode("System")
+    ctk.set_default_color_theme("blue")
+    root = ctk.CTk()
     app = QuironGUI(root)
     root.mainloop()
