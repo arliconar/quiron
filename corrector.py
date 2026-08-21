@@ -582,7 +582,7 @@ def find_text_bounds(page, target: str) -> list:
         
     return rects
 
-def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10, agent_name: str = "Antigravity", mode: str = "cli", api_llm: str = "", api_model: str = "", report_path: str = "", do_spelling: bool = True, do_dictamen: bool = True, do_guide: bool = False, guide_path: str = "", do_crossref: bool = True):
+def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10, agent_name: str = "Antigravity", mode: str = "cli", api_llm: str = "", api_model: str = "", report_path: str = "", do_spelling: bool = True, do_dictamen: bool = True, do_guide: bool = False, guide_path: str = "", stop_event=None):
     """
     Abre el PDF de entrada, analiza errores por página usando el CLI seleccionado,
     agrega anotaciones al PDF copia y guarda el resultado.
@@ -615,6 +615,8 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
         page_errors = {}
         
         def procesar_pagina(page_index: int):
+            if stop_event and stop_event.is_set():
+                return page_index, []
             page_text = doc[page_index].get_text("text").strip()
             if not page_text:
                 return page_index, []
@@ -629,12 +631,19 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
         with concurrent.futures.ThreadPoolExecutor(max_workers=num_agents) as executor:
             futures = {executor.submit(procesar_pagina, i): i for i in range(total_paginas)}
             for future in concurrent.futures.as_completed(futures):
+                if stop_event and stop_event.is_set():
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    break
                 try:
                     page_index, errs = future.result()
                     page_errors[page_index] = errs
                     print(f"✓ Página {page_index + 1} completada ({len(errs)} errores).")
                 except Exception as exc:
                     print(f"La página generó una excepción: {exc}", file=sys.stderr)
+
+        if stop_event and stop_event.is_set():
+            print("Proceso detenido por el usuario.")
+            return
 
         print("\n--- Aplicando anotaciones al PDF ---")
         for page_num in range(total_paginas):
@@ -688,65 +697,10 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
                     highlight.update()
                     total_anotaciones_creadas += 1
 
-    if do_crossref:
-        print("\n--- Verificando Referencias Cruzadas (Imágenes y Bibliografía) ---")
-        import re
-        figuras = set(re.findall(r'(Figura\s+\d+|Fig\.\s+\d+|Ilustración\s+\d+|Tabla\s+\d+|Cuadro\s+\d+)', full_text, re.IGNORECASE))
-        citas = set(re.findall(r'\[\d+\]', full_text))
-        
-        # 1. Detectar páginas de índice de figuras (suelen estar al principio y tener muchas menciones)
-        paginas_indice = set()
-        for page_num in range(min(total_paginas, max(10, int(total_paginas * 0.25)))):
-            page_text = doc[page_num].get_text("text").lower()
-            # Si se mencionan 4 o más figuras distintas, asumimos que es el índice
-            figuras_mencionadas = sum(1 for f in figuras if f.lower() in page_text)
-            if figuras_mencionadas >= 4:
-                paginas_indice.add(page_num)
-                
-        for fig in figuras:
-            # Contar ignorando el índice
-            conteo_real = 0
-            for page_num in range(total_paginas):
-                if page_num in paginas_indice:
-                    continue
-                conteo_real += doc[page_num].get_text("text").lower().count(fig.lower())
-                
-            if conteo_real <= 1:
-                print(f"  [AVISO] '{fig}' parece no estar referenciada en el texto (fuera del índice).")
-                for page_num in range(total_paginas):
-                    page = doc[page_num]
-                    rects = find_text_bounds(page, fig)
-                    for rect in rects:
-                        highlight = page.add_highlight_annot(rect)
-                        highlight.set_colors(stroke=(1.0, 0.5, 0.0))
-                        highlight.set_info(
-                            title="Quirón",
-                            subject="Falta Referencia",
-                            content=f"Advertencia: '{fig}' aparece aquí pero parece no tener referencia cruzada en el texto principal."
-                        )
-                        highlight.update()
-                        total_anotaciones_creadas += 1
-
-        for cita in citas:
-            conteo = full_text.count(cita)
-            if conteo == 1:
-                print(f"  [AVISO] La cita '{cita}' parece no estar referenciada en el texto.")
-                for page_num in range(total_paginas):
-                    page = doc[page_num]
-                    rects = find_text_bounds(page, cita)
-                    for rect in rects:
-                        highlight = page.add_highlight_annot(rect)
-                        highlight.set_colors(stroke=(1.0, 0.5, 0.0))
-                        highlight.set_info(
-                            title="Quirón",
-                            subject="Cita sin Uso",
-                            content=f"Advertencia: La cita '{cita}' aparece aquí pero parece no estar referenciada en el texto principal."
-                        )
-                        highlight.update()
-                        total_anotaciones_creadas += 1
-
     txt_output_path = ""
     if do_dictamen:
+        if stop_event and stop_event.is_set():
+            return
         # --- REVISIÓN DE CONTENIDO (DICTAMEN ACADÉMICO) ---
         agent_display = f"{api_llm} ({api_model})" if mode == "api" else agent_name
         print(f"\n--- Iniciando revisión de contenido global usando {agent_display} ---")
@@ -771,6 +725,8 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
             print("No se pudo obtener la revisión de contenido.")
 
     if do_guide and guide_path and os.path.exists(guide_path):
+        if stop_event and stop_event.is_set():
+            return
         print(f"\n--- Iniciando extracción de texto de la guía: {guide_path} ---")
         try:
             guide_doc = pymupdf.open(guide_path)

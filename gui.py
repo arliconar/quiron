@@ -44,6 +44,7 @@ class QuironGUI:
         self.root.geometry("720x720")
         self.root.resizable(False, False)
         
+        self.stop_event = threading.Event()
         self.input_file = ctk.StringVar()
         self.report_file = ctk.StringVar()
         self.guide_file = ctk.StringVar()
@@ -52,7 +53,6 @@ class QuironGUI:
         self.do_spelling_var = ctk.BooleanVar(value=True)
         self.do_dictamen_var = ctk.BooleanVar(value=True)
         self.do_guide_var = ctk.BooleanVar(value=True)
-        self.do_crossref_var = ctk.BooleanVar(value=True)
         self.mode_var = ctk.StringVar(value="cli") # 'cli' o 'api'
         self.agent_var = ctk.StringVar(value="Antigravity")
         
@@ -164,7 +164,6 @@ class QuironGUI:
         ctk.CTkCheckBox(tasks_frame, text="Ortografía", variable=self.do_spelling_var).pack(side=tk.LEFT, padx=(0, 10))
         ctk.CTkCheckBox(tasks_frame, text="Dictamen", variable=self.do_dictamen_var).pack(side=tk.LEFT, padx=(0, 10))
         ctk.CTkCheckBox(tasks_frame, text="Verif. Guía", variable=self.do_guide_var).pack(side=tk.LEFT, padx=(0, 10))
-        ctk.CTkCheckBox(tasks_frame, text="Ref. Cruzadas", variable=self.do_crossref_var).pack(side=tk.LEFT, padx=(0, 10))
         
         # Agentes y Modo
         ctk.CTkLabel(options_frame, text="Modo:").grid(row=2, column=0, sticky=tk.W, padx=10, pady=5)
@@ -220,6 +219,9 @@ class QuironGUI:
         
         self.run_button = ctk.CTkButton(action_frame, text="Iniciar Corrección", command=self.start_correction, font=ctk.CTkFont(weight="bold"))
         self.run_button.pack(side=tk.RIGHT, padx=5)
+        
+        self.stop_button = ctk.CTkButton(action_frame, text="Detener", command=self.stop_correction, fg_color="#C62828", hover_color="#B71C1C", font=ctk.CTkFont(weight="bold"), state=tk.DISABLED)
+        self.stop_button.pack(side=tk.RIGHT, padx=5)
         
         self.terminal_button = ctk.CTkButton(action_frame, text="Terminal Antigravity", command=self.login_antigravity, fg_color="gray30", hover_color="gray20")
         self.terminal_button.pack(side=tk.RIGHT, padx=5)
@@ -407,16 +409,25 @@ class QuironGUI:
             self.console_text.configure(state=tk.DISABLED)
         self.root.after(100, self.process_queue)
 
-    def run_correction_thread(self, input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path, do_crossref):
+    def run_correction_thread(self, input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path):
         try:
-            corregir_reporte_pdf(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path, do_crossref)
-            self.msg_queue.put("\n>>> PROCESO FINALIZADO CON ÉXITO <<<\n")
-            messagebox.showinfo("Completado", "El reporte ha sido corregido exitosamente.")
+            corregir_reporte_pdf(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path, stop_event=self.stop_event)
+            if self.stop_event.is_set():
+                self.msg_queue.put("\n>>> PROCESO DETENIDO POR EL USUARIO <<<\n")
+            else:
+                self.msg_queue.put("\n>>> PROCESO FINALIZADO CON ÉXITO <<<\n")
+                messagebox.showinfo("Completado", "El reporte ha sido corregido exitosamente.")
         except Exception as e:
             self.msg_queue.put(f"\n[ERROR CRÍTICO] {e}\n")
             messagebox.showerror("Error", f"Ocurrió un error inesperado:\n{e}")
         finally:
             self.run_button.configure(state=tk.NORMAL)
+            self.stop_button.configure(state=tk.DISABLED)
+
+    def stop_correction(self):
+        self.stop_event.set()
+        self.stop_button.configure(state=tk.DISABLED)
+        self.msg_queue.put("\n>>> DETENIENDO PROCESOS, POR FAVOR ESPERE... <<<\n")
 
     def start_correction(self):
         input_path = self.input_file.get()
@@ -468,7 +479,9 @@ class QuironGUI:
         self.console_text.delete(1.0, tk.END)
         self.console_text.configure(state=tk.DISABLED)
         
+        self.stop_event.clear()
         self.run_button.configure(state=tk.DISABLED)
+        self.stop_button.configure(state=tk.NORMAL)
         if mode == "api":
             self.msg_queue.put(f"Iniciando proceso con {num_agents} hilos usando API de {api_llm} ({api_model})...\n")
         else:
@@ -483,11 +496,10 @@ class QuironGUI:
         do_dictamen = self.do_dictamen_var.get()
         do_guide = self.do_guide_var.get()
         
-        do_crossref = self.do_crossref_var.get()
-        
-        if not do_spelling and not do_dictamen and not do_guide and not do_crossref:
+        if not do_spelling and not do_dictamen and not do_guide:
             self.msg_queue.put("No se seleccionó ninguna tarea a realizar.\n")
             self.run_button.configure(state=tk.NORMAL)
+            self.stop_button.configure(state=tk.DISABLED)
             return
             
         if do_guide and not guide_path:
@@ -495,7 +507,7 @@ class QuironGUI:
             do_guide = False
             
         # Lanzar el hilo
-        thread = threading.Thread(target=self.run_correction_thread, args=(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path, do_crossref))
+        thread = threading.Thread(target=self.run_correction_thread, args=(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path))
         thread.daemon = True
         thread.start()
 
