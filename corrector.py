@@ -70,7 +70,7 @@ def load_prompts():
             pass
     return DEFAULT_SYSTEM_PERSONALITY, DEFAULT_DICTAMEN_PROMPT, DEFAULT_GUIDE_PROMPT
 
-def run_agent_cli(text_content: str, page_num: int, agent: str = "Antigravity") -> list:
+def run_agent_cli(text_content: str, page_num: int, agent: str = "Antigravity", model: str = "") -> list:
     """
     Ejecuta el agente instruyéndole a leer un archivo de texto y generar un JSON con los errores.
     Devuelve la lista de errores encontrados.
@@ -98,18 +98,32 @@ def run_agent_cli(text_content: str, page_num: int, agent: str = "Antigravity") 
         else: # Antigravity por defecto
             cmd = ["agy", "--dangerously-skip-permissions", "-p", prompt_str]
         
-        # Ejecutar el comando
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="ignore"
-        )
+        max_retries = 5
+        base_delay = 3
         
-        response_text = result.stdout.strip()
-        if not response_text:
-            print(f"  [ERROR] El agente no generó respuesta en stdout. Error: {result.stderr}", file=sys.stderr)
+        for attempt in range(max_retries):
+            # Ejecutar el comando
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="ignore"
+            )
+            
+            response_text = result.stdout.strip()
+            if not response_text:
+                err_msg = result.stderr.strip()
+                if "429" in err_msg or "quota" in err_msg.lower() or "rate" in err_msg.lower() or "resource" in err_msg.lower():
+                    delay = base_delay * (2 ** attempt) + random.uniform(1, 4)
+                    print(f"  [AVISO Pág {page_num}] Límite de peticiones (429/Cuota) en {agent}. Reintentando en {delay:.1f}s...", file=sys.stderr)
+                    time.sleep(delay)
+                    continue
+                print(f"  [ERROR Pág {page_num}] El agente no generó respuesta en stdout. Error: {result.stderr}", file=sys.stderr)
+                return []
+            break
+        else:
+            print(f"  [ERROR Pág {page_num}] Se excedió el número máximo de reintentos para el agente {agent}.", file=sys.stderr)
             return []
             
         # Remover códigos ANSI por si acaso
@@ -163,7 +177,7 @@ def run_agent_cli(text_content: str, page_num: int, agent: str = "Antigravity") 
         
     return []
 
-def run_content_review_cli(text_content: str, agent: str = "Antigravity") -> str:
+def run_content_review_cli(text_content: str, agent: str = "Antigravity", model: str = "") -> str:
     """
     Ejecuta el agente para una revisión de contenido técnico usando el dictamen,
     leyendo y escribiendo en archivos para evitar problemas de longitud.
@@ -214,7 +228,7 @@ def run_content_review_cli(text_content: str, agent: str = "Antigravity") -> str
         
     return ""
 
-def run_guide_review_cli(full_text: str, guide_text: str, agent: str = "Antigravity") -> str:
+def run_guide_review_cli(full_text: str, guide_text: str, agent: str = "Antigravity", model: str = "") -> str:
     """
     Ejecuta el agente para una verificación de guía usando el guide_prompt.
     """
@@ -582,7 +596,7 @@ def find_text_bounds(page, target: str) -> list:
         
     return rects
 
-def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10, agent_name: str = "Antigravity", mode: str = "cli", api_llm: str = "", api_model: str = "", report_path: str = "", do_spelling: bool = True, do_dictamen: bool = True, do_guide: bool = False, guide_path: str = "", stop_event=None):
+def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10, agent_name: str = "Antigravity", mode: str = "cli", api_llm: str = "", api_model: str = "", report_path: str = "", do_spelling: bool = True, do_dictamen: bool = True, do_guide: bool = False, guide_path: str = "", cli_model: str = "", stop_event=None):
     """
     Abre el PDF de entrada, analiza errores por página usando el CLI seleccionado,
     agrega anotaciones al PDF copia y guarda el resultado.
@@ -624,7 +638,7 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
             if mode == "api":
                 errs = run_agent_api(page_text, api_llm, api_model)
             else:
-                errs = run_agent_cli(page_text, page_index + 1, agent_name)
+                errs = run_agent_cli(page_text, page_index + 1, agent_name, cli_model)
             return page_index, errs
 
         print(f"\n--- Analizando ortografía en paralelo ({num_agents} instancias) ---")
@@ -702,14 +716,14 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
         if stop_event and stop_event.is_set():
             return
         # --- REVISIÓN DE CONTENIDO (DICTAMEN ACADÉMICO) ---
-        agent_display = f"{api_llm} ({api_model})" if mode == "api" else agent_name
+        agent_display = f"{api_llm} ({api_model})" if mode == "api" else (f"{agent_name} ({cli_model})" if cli_model else agent_name)
         print(f"\n--- Iniciando revisión de contenido global usando {agent_display} ---")
         
         print("Enviando el documento completo para revisión de contenido (esto puede tardar unos momentos)...")
         if mode == "api":
             revision_contenido = run_content_review_api(full_text, api_llm, api_model)
         else:
-            revision_contenido = run_content_review_cli(full_text, agent_name)
+            revision_contenido = run_content_review_cli(full_text, agent_name, cli_model)
         
         if revision_contenido:
             if report_path:
@@ -738,13 +752,13 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
             guide_full_text = "\n\n".join(guide_pages_text)
             guide_doc.close()
             
-            agent_display = f"{api_llm} ({api_model})" if mode == "api" else agent_name
+            agent_display = f"{api_llm} ({api_model})" if mode == "api" else (f"{agent_name} ({cli_model})" if cli_model else agent_name)
             print(f"--- Iniciando verificación de guía usando {agent_display} ---")
             
             if mode == "api":
                 verificacion_guia = run_guide_review_api(full_text, guide_full_text, api_llm, api_model)
             else:
-                verificacion_guia = run_guide_review_cli(full_text, guide_full_text, agent_name)
+                verificacion_guia = run_guide_review_cli(full_text, guide_full_text, agent_name, cli_model)
                 
             if verificacion_guia:
                 base, _ = os.path.splitext(input_path)
@@ -812,6 +826,11 @@ def main():
         help="CLI a utilizar para la corrección."
     )
     parser.add_argument(
+        "-m", "--model",
+        default="",
+        help="Modelo a utilizar en CLI (ej. gemini-3.7-flash, gemini-3.7-pro, claude-3-7-sonnet)."
+    )
+    parser.add_argument(
         "--skip-spelling",
         action="store_true",
         help="Omite la corrección ortográfica."
@@ -840,7 +859,7 @@ def main():
     if args.guide:
         guide_path = os.path.abspath(args.guide)
         
-    corregir_reporte_pdf(input_path, output_path, args.agents, args.agent_cli, report_path=report_output_path, do_spelling=not args.skip_spelling, do_dictamen=not args.skip_dictamen, do_guide=bool(guide_path), guide_path=guide_path)
+    corregir_reporte_pdf(input_path, output_path, args.agents, args.agent_cli, report_path=report_output_path, do_spelling=not args.skip_spelling, do_dictamen=not args.skip_dictamen, do_guide=bool(guide_path), guide_path=guide_path, cli_model=args.model)
 
 if __name__ == "__main__":
     main()

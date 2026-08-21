@@ -17,10 +17,33 @@ except ImportError:
 CONFIG_FILE = "config.json"
 
 MODELS_JSON = {
-    "ChatGPT": ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"],
-    "Gemini": ["gemini-3.5-flash", "gemini-3.5-pro", "gemini-1.5-flash", "gemini-1.5-pro"],
-    "Claude": ["claude-3-haiku-20240307", "claude-3-5-sonnet-20240620", "claude-3-sonnet-20240229", "claude-3-opus-20240229"],
-    "Grok": ["grok-beta", "grok-2", "grok-2-mini"]
+    "Gemini": [
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro"
+    ],
+    "ChatGPT": [
+        "gpt-4o-mini",
+        "gpt-4o",
+        "o3-mini",
+        "o1",
+        "gpt-4.5-preview",
+        "gpt-4-turbo",
+        "gpt-3.5-turbo"
+    ],
+    "Claude": [
+        "claude-3-7-sonnet-20250219",
+        "claude-3-5-sonnet-20241022",
+        "claude-3-5-haiku-20241022",
+        "claude-3-opus-20240229"
+    ],
+    "Grok": [
+        "grok-2",
+        "grok-2-mini",
+        "grok-beta"
+    ]
 }
 
 ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
@@ -41,8 +64,9 @@ class QuironGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Quirón - Corrector de Reportes PDF")
-        self.root.geometry("720x720")
-        self.root.resizable(False, False)
+        self.root.geometry("720x750")
+        self.root.minsize(680, 600)
+        self.root.resizable(True, True)
         
         self.stop_event = threading.Event()
         self.input_file = ctk.StringVar()
@@ -92,6 +116,7 @@ class QuironGUI:
             
         self.config_data["last_llm"] = llm
         self.config_data["last_model"] = self.api_model_var.get()
+        self.config_data["last_agent"] = self.agent_var.get()
         self.config_data["mode"] = self.mode_var.get()
         
         try:
@@ -103,6 +128,8 @@ class QuironGUI:
     def apply_config(self):
         if "mode" in self.config_data:
             self.mode_var.set(self.config_data["mode"])
+        if "last_agent" in self.config_data:
+            self.agent_var.set(self.config_data["last_agent"])
         if "last_llm" in self.config_data:
             self.api_llm_var.set(self.config_data["last_llm"])
         if "last_model" in self.config_data:
@@ -116,9 +143,10 @@ class QuironGUI:
         
         # Actualizar modelos disponibles
         models = MODELS_JSON.get(llm, [])
-        self.api_model_combo.configure(values=models)
-        if models and self.api_model_var.get() not in models:
-            self.api_model_var.set(models[0])
+        if hasattr(self, 'api_model_combo'):
+            self.api_model_combo.configure(values=models)
+            if models and not self.api_model_var.get():
+                self.api_model_var.set(models[0])
 
     def create_widgets(self):
         # Frame principal
@@ -128,25 +156,26 @@ class QuironGUI:
         # --- Sección 1: Selección de Archivo ---
         file_frame = ctk.CTkFrame(main_frame)
         file_frame.pack(fill=tk.X, pady=(0, 10))
+        file_frame.grid_columnconfigure(1, weight=1)
         
         file_title = ctk.CTkLabel(file_frame, text="1. Selección de Archivos", font=ctk.CTkFont(size=14, weight="bold"))
         file_title.grid(row=0, column=0, columnspan=3, sticky=tk.W, padx=10, pady=(10, 5))
         
         ctk.CTkLabel(file_frame, text="Memoria (PDF):").grid(row=1, column=0, sticky=tk.W, padx=10, pady=5)
-        self.file_entry = ctk.CTkEntry(file_frame, textvariable=self.input_file, state='readonly', width=400)
-        self.file_entry.grid(row=1, column=1, padx=5, pady=5)
+        self.file_entry = ctk.CTkEntry(file_frame, textvariable=self.input_file, state='readonly')
+        self.file_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=5)
         
         ctk.CTkButton(file_frame, text="Buscar PDF...", command=self.browse_file, width=120).grid(row=1, column=2, padx=10, pady=5)
         
         ctk.CTkLabel(file_frame, text="Dictamen Académico:").grid(row=2, column=0, sticky=tk.W, padx=10, pady=5)
-        self.report_entry = ctk.CTkEntry(file_frame, textvariable=self.report_file, state='readonly', width=400)
-        self.report_entry.grid(row=2, column=1, padx=5, pady=5)
+        self.report_entry = ctk.CTkEntry(file_frame, textvariable=self.report_file, state='readonly')
+        self.report_entry.grid(row=2, column=1, sticky="ew", padx=5, pady=5)
         
         ctk.CTkButton(file_frame, text="Buscar Destino...", command=self.browse_report, width=120).grid(row=2, column=2, padx=10, pady=5)
 
         ctk.CTkLabel(file_frame, text="Guía / Manual (PDF):").grid(row=3, column=0, sticky=tk.W, padx=10, pady=(5, 10))
-        self.guide_entry = ctk.CTkEntry(file_frame, textvariable=self.guide_file, state='readonly', width=400)
-        self.guide_entry.grid(row=3, column=1, padx=5, pady=(5, 10))
+        self.guide_entry = ctk.CTkEntry(file_frame, textvariable=self.guide_file, state='readonly')
+        self.guide_entry.grid(row=3, column=1, sticky="ew", padx=5, pady=(5, 10))
         
         ctk.CTkButton(file_frame, text="Buscar Guía...", command=self.browse_guide, width=120).grid(row=3, column=2, padx=10, pady=(5, 10))
         
@@ -185,7 +214,7 @@ class QuironGUI:
         # CLI Frame
         self.cli_frame = ctk.CTkFrame(options_frame, fg_color="transparent")
         ctk.CTkLabel(self.cli_frame, text="Agente CLI:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.agent_combo = ctk.CTkComboBox(self.cli_frame, variable=self.agent_var, values=["Antigravity", "GitHub CLI", "Claude Code"], state='readonly', width=150)
+        self.agent_combo = ctk.CTkComboBox(self.cli_frame, variable=self.agent_var, values=["Antigravity", "GitHub CLI", "Claude Code"], state='readonly', width=180)
         self.agent_combo.grid(row=0, column=1, sticky=tk.W, padx=10)
         
         # API Frame
@@ -195,8 +224,8 @@ class QuironGUI:
         self.api_llm_combo = ctk.CTkComboBox(self.api_frame, variable=self.api_llm_var, values=list(MODELS_JSON.keys()), state='readonly', width=150)
         self.api_llm_combo.grid(row=0, column=1, sticky=tk.W, padx=10)
         
-        ctk.CTkLabel(self.api_frame, text="Modelo:").grid(row=1, column=0, sticky=tk.W, pady=5)
-        self.api_model_combo = ctk.CTkComboBox(self.api_frame, variable=self.api_model_var, state='readonly', width=200)
+        ctk.CTkLabel(self.api_frame, text="Modelo API:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.api_model_combo = ctk.CTkComboBox(self.api_frame, variable=self.api_model_var, state='normal', width=220)
         self.api_model_combo.grid(row=1, column=1, sticky=tk.W, padx=10)
         
         ctk.CTkLabel(self.api_frame, text="API Key:").grid(row=2, column=0, sticky=tk.W, pady=5)
@@ -409,14 +438,15 @@ class QuironGUI:
             self.console_text.configure(state=tk.DISABLED)
         self.root.after(100, self.process_queue)
 
-    def run_correction_thread(self, input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path):
+    def run_correction_thread(self, input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path, cli_model=""):
         try:
-            corregir_reporte_pdf(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path, stop_event=self.stop_event)
+            corregir_reporte_pdf(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path, cli_model=cli_model, stop_event=self.stop_event)
             if self.stop_event.is_set():
                 self.msg_queue.put("\n>>> PROCESO DETENIDO POR EL USUARIO <<<\n")
             else:
                 self.msg_queue.put("\n>>> PROCESO FINALIZADO CON ÉXITO <<<\n")
                 messagebox.showinfo("Completado", "El reporte ha sido corregido exitosamente.")
+            self.save_config()
         except Exception as e:
             self.msg_queue.put(f"\n[ERROR CRÍTICO] {e}\n")
             messagebox.showerror("Error", f"Ocurrió un error inesperado:\n{e}")
@@ -444,6 +474,7 @@ class QuironGUI:
         api_llm = ""
         api_model = ""
         agent_name = ""
+        cli_model = ""
         
         if mode == "api":
             api_llm = self.api_llm_var.get()
@@ -463,10 +494,11 @@ class QuironGUI:
                 os.environ["ANTHROPIC_API_KEY"] = api_key
             elif api_llm == "Grok":
                 os.environ["XAI_API_KEY"] = api_key
-                
-            self.save_config()
         else:
             agent_name = self.agent_var.get()
+            cli_model = ""
+            
+        self.save_config()
             
         # Determinar archivo de salida
         if self.overwrite_var.get():
@@ -507,7 +539,7 @@ class QuironGUI:
             do_guide = False
             
         # Lanzar el hilo
-        thread = threading.Thread(target=self.run_correction_thread, args=(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path))
+        thread = threading.Thread(target=self.run_correction_thread, args=(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path, cli_model))
         thread.daemon = True
         thread.start()
 
