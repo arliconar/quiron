@@ -33,7 +33,7 @@ jobs:
         pip install -r requirements.txt
         
     - name: Build with PyInstaller
-      run: pyinstaller --noconsole --onefile gui.py
+      run: pyinstaller --noconsole --onefile --collect-all customtkinter gui.py
       
     - name: Rename Executable (Windows)
       if: matrix.os == 'windows-latest'
