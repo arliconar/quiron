@@ -9,7 +9,202 @@ import pymupdf
 import requests
 import time
 import random
-import time
+import unicodedata
+
+try:
+    import pdfplumber
+    HAS_PDFPLUMBER = True
+except ImportError:
+    HAS_PDFPLUMBER = False
+
+# Mapeo explícito de ligaduras tipográficas Unicode estándar
+LIGATURE_MAP = {
+    "\ufb00": "ff",
+    "\ufb01": "fi",
+    "\ufb02": "fl",
+    "\ufb03": "ffi",
+    "\ufb04": "ffl",
+    "\ufb05": "ft",
+    "\ufb06": "st",
+}
+
+# Patrones morfológicos y de referencias académicas para reconstruir texto
+# donde la ligadura (fl, fi, ff) o guiones de rango fueron extraídos rotos o con espacios
+RECONSTRUCTION_PATTERNS = [
+    # Rangos de páginas y números en referencias/bibliografía
+    (r'\bpp\.\s*(\d+)\s+(\d+)\b', r'pp. \1-\2'),
+    (r'\bno\.\s*(\d+)\s+(\d+)\b', r'no. \1-\2'),
+    (r'\bvol\.\s*(\d+)\s+(\d+)\b', r'vol. \1-\2'),
+    (r'\bpág\.\s*(\d+)\s+(\d+)\b', r'pág. \1-\2'),
+    (r'\bpágs\.\s*(\d+)\s+(\d+)\b', r'págs. \1-\2'),
+    
+    # Palabras con 'fl'
+    (r'\bcon[\s\ue000-\uf8ff]?icto\b', 'conflicto'),
+    (r'\bcon[\s\ue000-\uf8ff]?ictos\b', 'conflictos'),
+    (r'\bcon[\s\ue000-\uf8ff]?ictiv', 'conflictiv'),
+    (r'\bin[\s\ue000-\uf8ff]?aci', 'inflaci'),
+    (r'\bin[\s\ue000-\uf8ff]?uir\b', 'influir'),
+    (r'\bin[\s\ue000-\uf8ff]?uyen', 'influyen'),
+    (r'\bin[\s\ue000-\uf8ff]?uencia', 'influencia'),
+    (r'\bin[\s\ue000-\uf8ff]?uencias', 'influencias'),
+    (r'\bin[\s\ue000-\uf8ff]?ujo\b', 'influjo'),
+    (r'\bin[\s\ue000-\uf8ff]?amaci', 'inflamaci'),
+    (r'\bre[\s\ue000-\uf8ff]?exi', 'reflexi'),
+    (r'\bre[\s\ue000-\uf8ff]?ej', 'reflej'),
+    (r'\bre[\s\ue000-\uf8ff]?ujo\b', 'reflujo'),
+    (r'\ba[\s\ue000-\uf8ff]?uent', 'afluent'),
+    (r'\ba[\s\ue000-\uf8ff]?uenci', 'afluenci'),
+    (r'\ba[\s\ue000-\uf8ff]?igi', 'afligi'),
+    (r'\b[\s\ue000-\uf8ff]?ujo\b', 'flujo'),
+    (r'\b[\s\ue000-\uf8ff]?ujos\b', 'flujos'),
+    (r'\b[\s\ue000-\uf8ff]?uido\b', 'fluido'),
+    (r'\b[\s\ue000-\uf8ff]?uidos\b', 'fluidos'),
+    (r'\b[\s\ue000-\uf8ff]?uid', 'fluid'),
+    (r'\b[\s\ue000-\uf8ff]?exib', 'flexib'),
+    (r'\b[\s\ue000-\uf8ff]?echa\b', 'flecha'),
+    (r'\b[\s\ue000-\uf8ff]?echas\b', 'flechas'),
+    (r'\b[\s\ue000-\uf8ff]?ora\b', 'flora'),
+    (r'\b[\s\ue000-\uf8ff]?ores\b', 'flores'),
+    (r'\b[\s\ue000-\uf8ff]?or\b', 'flor'),
+    (r'\b[\s\ue000-\uf8ff]?ot', 'flot'),
+    
+    # Palabras con 'fi' / 'ff' / 'f' y casos científicos/académicos comunes
+    (r'\bPonti[\s\ue000-\uf8ff]?cia\b', 'Pontificia'),
+    (r'\bponti[\s\ue000-\uf8ff]?cia\b', 'pontificia'),
+    (r'\bDi[\s\ue000-\uf8ff]?erenti', 'Differenti'),
+    (r'\bdi[\s\ue000-\uf8ff]?erenti', 'differenti'),
+    (r'\bde[\s\ue000-\uf8ff]?nici', 'definici'),
+    (r'\bde[\s\ue000-\uf8ff]?nir\b', 'definir'),
+    (r'\bde[\s\ue000-\uf8ff]?nitiv', 'definitiv'),
+    (r'\bde[\s\ue000-\uf8ff]?nid', 'definid'),
+    (r'\bcon[\s\ue000-\uf8ff]?gura', 'configura'),
+    (r'\bcon[\s\ue000-\uf8ff]?anza\b', 'confianza'),
+    (r'\bcon[\s\ue000-\uf8ff]?ar\b', 'confiar'),
+    (r'\bcon[\s\ue000-\uf8ff]?rm', 'confirm'),
+    (r'\bsigni[\s\ue000-\uf8ff]?ica', 'significa'),
+    (r'\bbene[\s\ue000-\uf8ff]?ici', 'benefici'),
+    (r'\be[\s\ue000-\uf8ff]?ici', 'efici'),
+    (r'\be[\s\ue000-\uf8ff]?caz\b', 'eficaz'),
+    (r'\be[\s\ue000-\uf8ff]?caces\b', 'eficaces'),
+    (r'\be[\s\ue000-\uf8ff]?cacia\b', 'eficacia'),
+    (r'\bdi[\s\ue000-\uf8ff]?cult', 'dificult'),
+    (r'\bdi[\s\ue000-\uf8ff]?ícil', 'difícil'),
+    (r'\bdi[\s\ue000-\uf8ff]?icil', 'difícil'),
+    (r'\bdi[\s\ue000-\uf8ff]?erenc', 'diferenc'),
+    (r'\bdi[\s\ue000-\uf8ff]?erent', 'diferent'),
+    (r'\bin[\s\ue000-\uf8ff]?ormaci', 'informaci'),
+    (r'\bin[\s\ue000-\uf8ff]?orme\b', 'informe'),
+    (r'\bin[\s\ue000-\uf8ff]?ormes\b', 'informes'),
+    (r'\bin[\s\ue000-\uf8ff]?ormat', 'informat'),
+    (r'\b[\s\ue000-\uf8ff]?iltro\b', 'filtro'),
+    (r'\b[\s\ue000-\uf8ff]?iltros\b', 'filtros'),
+    (r'\b[\s\ue000-\uf8ff]?iltr', 'filtr'),
+    (r'\b[\s\ue000-\uf8ff]?inal\b', 'final'),
+    (r'\b[\s\ue000-\uf8ff]?inanz', 'finanz'),
+    (r'\b[\s\ue000-\uf8ff]?ísica\b', 'física'),
+    (r'\b[\s\ue000-\uf8ff]?isic', 'fisic'),
+]
+
+# Expresiones regulares precompiladas para máxima velocidad
+COMPILED_RECONSTRUCTIONS = [
+    (re.compile(pattern, re.IGNORECASE), replacement)
+    for pattern, replacement in RECONSTRUCTION_PATTERNS
+]
+DEHYPHEN_RE = re.compile(r'(\b\w+)-\n(\w+\b)')
+PUA_RE = re.compile(r'[\ue000-\uf8ff]')
+CID_RE = re.compile(r'\(cid:(\d+)\)')
+
+def decode_cid_match(m) -> str:
+    """Traduce códigos (cid:NNN) de fuentes PDF/pdfminer a caracteres legibles (ej. (cid:243) -> ó)."""
+    try:
+        code = int(m.group(1))
+        if 32 <= code <= 255:
+            return bytes([code]).decode('cp1252', errors='replace')
+        elif code > 255:
+            return chr(code)
+    except Exception:
+        pass
+    return ""
+
+def clean_ligatures(text: str) -> str:
+    """
+    Heurística profunda de limpieza y reconstrucción de texto:
+    1. Traduce códigos (cid:NNN) generados por pdfminer / pdfplumber.
+    2. Normaliza ligaduras Unicode estándar (fi, fl, ff, ffi, ffl, etc.).
+    3. Resuelve dehyphenation (guiones de corte de palabra al final de línea).
+    4. Normaliza caracteres Unicode mediante compatibilidad NFKC.
+    5. Reconstruye palabras rotas por huecos o pérdidas de glifos en español/académico.
+    6. Limpia códigos residuales de la zona de uso privado (PUA).
+    """
+    if not text:
+        return ""
+    
+    # 1. Traducir códigos CID no mapeados de pdfminer (ej. (cid:243) -> ó)
+    if "(cid:" in text:
+        text = CID_RE.sub(decode_cid_match, text)
+    
+    # 2. Ligaduras estándar conocidas
+    for lig, rep in LIGATURE_MAP.items():
+        if lig in text:
+            text = text.replace(lig, rep)
+        
+    # 3. Dehyphenation básico
+    text = DEHYPHEN_RE.sub(r'\1\2', text)
+    
+    # 4. Normalización NFKC
+    text = unicodedata.normalize("NFKC", text)
+    
+    # 5. Reconstrucción morfológica con regex precompiladas
+    for compiled_re, replacement in COMPILED_RECONSTRUCTIONS:
+        def repl(match, rep=replacement):
+            matched = match.group(0)
+            if matched and matched[0].isupper():
+                return rep.capitalize()
+            return rep
+        text = compiled_re.sub(repl, text)
+        
+    # 6. Limpieza residual de caracteres de uso privado no asignados
+    text = PUA_RE.sub('', text)
+    
+    return text
+
+def fast_normalize_word(text: str) -> str:
+    """Normalización ultrarrápida en memoria para tokens individuales de búsqueda."""
+    if not text:
+        return ""
+    if "(cid:" in text:
+        text = CID_RE.sub(decode_cid_match, text)
+    for lig, rep in LIGATURE_MAP.items():
+        if lig in text:
+            text = text.replace(lig, rep)
+    return unicodedata.normalize("NFKC", text).lower()
+
+def extract_all_pages_text(pdf_path: str, doc) -> list:
+    """
+    Extrae el texto de todas las páginas de un PDF usando pdfplumber como motor principal
+    para máxima fidelidad en fuentes y ligaduras rotas, con respaldo en PyMuPDF.
+    """
+    pages_text = []
+    total_pages = len(doc)
+    
+    if HAS_PDFPLUMBER and pdf_path and os.path.exists(pdf_path):
+        try:
+            print("Extrayendo texto con motor de alta precisión (pdfplumber)...")
+            with pdfplumber.open(pdf_path) as pdf:
+                for p in pdf.pages:
+                    txt = p.extract_text(layout=False) or ""
+                    pages_text.append(clean_ligatures(txt).strip())
+        except Exception as e:
+            print(f"Aviso con pdfplumber: {e}, usando PyMuPDF...", file=sys.stderr)
+            pages_text = []
+            
+    if not pages_text:
+        print("Extrayendo texto con PyMuPDF...")
+        for page_num in range(total_pages):
+            txt = doc[page_num].get_text("text") or ""
+            pages_text.append(clean_ligatures(txt).strip())
+            
+    return pages_text
 
 # Configuración del Prompt del Sistema para Gemini
 DEFAULT_SYSTEM_PERSONALITY = (
@@ -35,6 +230,7 @@ SYSTEM_PROMPT_JSON_INSTRUCTIONS = (
     "3. La palabra o frase en 'original' DEBE coincidir carácter por carácter con el texto original. Presta mucha atención a mayúsculas, minúsculas y acentos.\n"
     "4. No inventes errores de estilo subjetivos. Concéntrate en errores objetivos.\n"
     "5. No corrijas nombres propios de herramientas o tecnologías conocidas (ej. Python, PostgreSQL, Docker, etc.).\n"
+    "6. Si encuentras una palabra que parece haber perdido letras o tener espacios extra por problemas de extracción de fuentes del PDF (ej. ligaduras como 'fl' o 'fi'), devuélvela corregida con su grafía completa y correcta en español.\n"
 )
 
 DEFAULT_DICTAMEN_PROMPT = (
@@ -567,32 +763,83 @@ def run_guide_review_api(full_text: str, guide_text: str, api_llm: str, api_mode
 def find_text_bounds(page, target: str) -> list:
     """
     Busca una palabra o frase en la página del PDF y devuelve sus rectángulos.
-    Usa coincidencia de palabras completas para evitar falsos positivos de substrings.
+    Usa coincidencia de palabras completas, normalización de ligaduras,
+    búsqueda de variantes (guiones, espacios, ligaduras) y
+    fusión de bloques contiguos si la palabra está fragmentada internamente en el PDF.
     """
     target = target.strip()
     if not target:
         return []
         
-    # Si contiene espacios, es una frase: usamos search_for directo
-    if " " in target:
-        return page.search_for(target)
+    cleaned_target = clean_ligatures(target).strip()
+    
+    # Lista de variantes a buscar con search_for
+    search_candidates = [
+        target,
+        cleaned_target,
+        target.replace(" ", "-"),
+        target.replace("-", " "),
+        target.replace(" ", "fi"),
+        target.replace(" ", "fl"),
+        target.replace(" ", "ff"),
+        target.replace("ff", " "),
+        target.replace("fi", " "),
+        target.replace("fl", " "),
+        target.replace(" ", ""),
+    ]
+    seen_cand = set()
+    unique_candidates = []
+    for c in search_candidates:
+        if c and c not in seen_cand:
+            seen_cand.add(c)
+            unique_candidates.append(c)
+
+    # Si contiene espacios o guiones, es una frase o rango: probar search_for primero
+    if " " in target or " " in cleaned_target or "-" in target or "-" in cleaned_target:
+        for cand in unique_candidates:
+            rects = page.search_for(cand)
+            if rects:
+                return rects
         
-    # Si es una sola palabra, filtramos por palabra completa usando page.get_text("words")
     # Formato de word: (x0, y0, x1, y1, "texto", block_no, line_no, word_no)
     words = page.get_text("words")
     rects = []
-    target_lower = target.lower()
+    cand_lowers = {c.lower() for c in unique_candidates}
     
+    # 1. Coincidencia directa o normalizada en palabras individuales
     for w in words:
         w_text = w[4]
         # Limpiar signos de puntuación comunes alrededor de la palabra
         cleaned_w = w_text.strip(',.¡!¿?()[]{};:"\'')
-        if cleaned_w.lower() == target_lower:
+        normalized_w = clean_ligatures(cleaned_w)
+        
+        if (
+            cleaned_w.lower() in cand_lowers
+            or normalized_w.lower() in cand_lowers
+        ):
             rects.append(pymupdf.Rect(w[:4]))
             
-    # Si por alguna razón no se encontró (ej. ligaduras o guiones de división), usamos search_for como respaldo
+    # 2. Si no se encontró, buscar palabras fragmentadas en 2 o 3 tokens contiguos (ej. "con" + "icto", "pp." + "45" + "55")
+    if not rects and len(words) >= 2:
+        for i in range(len(words) - 1):
+            w1, w2 = words[i], words[i+1]
+            if w1[5] == w2[5] and w1[6] == w2[6]:
+                comb_no_space = w1[4].strip(',.¡!¿?()[]{};:"\'') + w2[4].strip(',.¡!¿?()[]{};:"\'')
+                comb_space = w1[4].strip(',.¡!¿?()[]{};:"\'') + " " + w2[4].strip(',.¡!¿?()[]{};:"\'')
+                norm_no_space = clean_ligatures(comb_no_space)
+                norm_space = clean_ligatures(comb_space)
+                
+                if any(t in cand_lowers for t in [comb_no_space.lower(), comb_space.lower(), norm_no_space.lower(), norm_space.lower()]):
+                    r1 = pymupdf.Rect(w1[:4])
+                    r2 = pymupdf.Rect(w2[:4])
+                    rects.append(r1 | r2)
+            
+    # 3. Fallback: búsqueda directa de todos los candidatos con search_for
     if not rects:
-        rects = page.search_for(target)
+        for cand in unique_candidates:
+            rects = page.search_for(cand)
+            if rects:
+                return rects
         
     return rects
 
@@ -615,11 +862,10 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
     total_errores_detectados = 0
     total_anotaciones_creadas = 0
     
-    # Guardamos el texto completo para el final
-    print("Extrayendo texto de todas las páginas...")
+    # Extracción de texto de todas las páginas con el motor de alta fidelidad
+    all_pages_text_list = extract_all_pages_text(input_path, doc)
     all_pages_text = []
-    for page_num in range(total_paginas):
-        page_text = doc[page_num].get_text("text").strip()
+    for page_num, page_text in enumerate(all_pages_text_list):
         if page_text:
             all_pages_text.append(f"--- PÁGINA {page_num + 1} ---\n{page_text}")
     full_text = "\n\n".join(all_pages_text)
@@ -631,7 +877,7 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
         def procesar_pagina(page_index: int):
             if stop_event and stop_event.is_set():
                 return page_index, []
-            page_text = doc[page_index].get_text("text").strip()
+            page_text = all_pages_text_list[page_index] if page_index < len(all_pages_text_list) else ""
             if not page_text:
                 return page_index, []
             print(f"Lanzando revisión de Página {page_index + 1}...")
@@ -744,12 +990,8 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
         print(f"\n--- Iniciando extracción de texto de la guía: {guide_path} ---")
         try:
             guide_doc = pymupdf.open(guide_path)
-            guide_pages_text = []
-            for i in range(len(guide_doc)):
-                gt = guide_doc[i].get_text("text").strip()
-                if gt:
-                    guide_pages_text.append(gt)
-            guide_full_text = "\n\n".join(guide_pages_text)
+            guide_pages_list = extract_all_pages_text(guide_path, guide_doc)
+            guide_full_text = "\n\n".join([gt for gt in guide_pages_list if gt])
             guide_doc.close()
             
             agent_display = f"{api_llm} ({api_model})" if mode == "api" else (f"{agent_name} ({cli_model})" if cli_model else agent_name)
