@@ -262,11 +262,21 @@ class QuironGUI:
         console_frame = ctk.CTkFrame(main_frame)
         console_frame.pack(fill=tk.BOTH, expand=True)
         
-        console_title = ctk.CTkLabel(console_frame, text="Consola de Progreso", font=ctk.CTkFont(size=14, weight="bold"))
-        console_title.pack(anchor=tk.W, padx=10, pady=(10, 0))
+        console_header = ctk.CTkFrame(console_frame, fg_color="transparent")
+        console_header.pack(fill=tk.X, padx=10, pady=(10, 5))
+        
+        console_title = ctk.CTkLabel(console_header, text="Consola de Progreso", font=ctk.CTkFont(size=14, weight="bold"))
+        console_title.pack(side=tk.LEFT)
+        
+        self.progress_label = ctk.CTkLabel(console_header, text="0/0 páginas (0.0%)", font=ctk.CTkFont(size=12, weight="bold"))
+        self.progress_label.pack(side=tk.RIGHT)
+        
+        self.progress_bar = ctk.CTkProgressBar(console_frame)
+        self.progress_bar.pack(fill=tk.X, padx=10, pady=(0, 5))
+        self.progress_bar.set(0)
         
         self.console_text = ctk.CTkTextbox(console_frame, wrap=tk.WORD, state=tk.DISABLED, font=("Consolas", 12))
-        self.console_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.console_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
 
     def update_agents_label(self, value):
         self.agents_label.configure(text=f"{int(value)}")
@@ -438,9 +448,20 @@ class QuironGUI:
             self.console_text.configure(state=tk.DISABLED)
         self.root.after(100, self.process_queue)
 
+    def update_gui_progress(self, current, total):
+        def _update():
+            if total > 0:
+                pct = current / total
+                self.progress_bar.set(pct)
+                self.progress_label.configure(text=f"{current}/{total} páginas ({pct * 100:.1f}%)")
+            else:
+                self.progress_bar.set(0)
+                self.progress_label.configure(text="0/0 páginas (0.0%)")
+        self.root.after(0, _update)
+
     def run_correction_thread(self, input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path, cli_model=""):
         try:
-            corregir_reporte_pdf(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path, cli_model=cli_model, stop_event=self.stop_event)
+            corregir_reporte_pdf(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path, cli_model=cli_model, stop_event=self.stop_event, progress_callback=self.update_gui_progress)
             if self.stop_event.is_set():
                 self.msg_queue.put("\n>>> PROCESO DETENIDO POR EL USUARIO <<<\n")
             else:
@@ -510,6 +531,7 @@ class QuironGUI:
         self.console_text.configure(state=tk.NORMAL)
         self.console_text.delete(1.0, tk.END)
         self.console_text.configure(state=tk.DISABLED)
+        self.update_gui_progress(0, 0)
         
         self.stop_event.clear()
         self.run_button.configure(state=tk.DISABLED)

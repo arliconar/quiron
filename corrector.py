@@ -819,9 +819,18 @@ def find_text_bounds(page, target: str) -> list:
         
     return rects
 
-def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10, agent_name: str = "Antigravity", mode: str = "cli", api_llm: str = "", api_model: str = "", report_path: str = "", do_spelling: bool = True, do_dictamen: bool = True, do_guide: bool = False, guide_path: str = "", cli_model: str = "", stop_event=None):
+def crear_barra_progreso(actual: int, total: int, ancho: int = 20) -> str:
+    """Genera una barra de progreso visual en formato texto."""
+    if total <= 0:
+        return f"[{'░' * ancho}] 0/0 (0.0%)"
+    porcentaje = (actual / total) * 100
+    llenos = int(ancho * actual // total)
+    barra = "█" * llenos + "░" * (ancho - llenos)
+    return f"[{barra}] {actual}/{total} páginas ({porcentaje:.1f}%)"
+
+def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10, agent_name: str = "Antigravity", mode: str = "cli", api_llm: str = "", api_model: str = "", report_path: str = "", do_spelling: bool = True, do_dictamen: bool = True, do_guide: bool = False, guide_path: str = "", cli_model: str = "", stop_event=None, progress_callback=None):
     """
-    Abre el PDF de entrada, analiza errores por página usando el CLI seleccionado,
+    Abre el PDF de entrada, analiza errores por página usando el CLI o API seleccionado,
     agrega anotaciones al PDF copia y guarda el resultado.
     """
     if not os.path.exists(input_path):
@@ -831,10 +840,16 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
     print(f"Abriendo PDF: {input_path}")
     doc = pymupdf.open(input_path)
     total_paginas = len(doc)
-    print(f"Total de páginas a procesar: {total_paginas}")
     
-    # Registro de errores globales para no repetirlos
-    seen_errors_global = set()
+    print("\n==================================================")
+    print("INICIANDO PROCESO DE CORRECCIÓN DE DOCUMENTO")
+    print(f"Total de páginas a procesar: {total_paginas}")
+    print(f"Progreso inicial: {crear_barra_progreso(0, total_paginas)}")
+    print("==================================================\n")
+    
+    if progress_callback:
+        progress_callback(0, total_paginas)
+    
     total_errores_detectados = 0
     total_anotaciones_creadas = 0
     
@@ -849,6 +864,7 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
     if do_spelling:
         # Diccionario para guardar los errores detectados por página
         page_errors = {}
+        paginas_procesadas = 0
         
         def procesar_pagina(page_index: int):
             if stop_event and stop_event.is_set():
@@ -856,7 +872,7 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
             page_text = all_pages_text_list[page_index] if page_index < len(all_pages_text_list) else ""
             if not page_text:
                 return page_index, []
-            print(f"Lanzando revisión de Página {page_index + 1}...")
+            print(f"Lanzando revisión de Página {page_index + 1} de {total_paginas}...")
             if mode == "api":
                 errs = run_agent_api(page_text, api_llm, api_model)
             else:
@@ -873,9 +889,17 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
                 try:
                     page_index, errs = future.result()
                     page_errors[page_index] = errs
-                    print(f"✓ Página {page_index + 1} completada ({len(errs)} errores).")
+                    paginas_procesadas += 1
+                    barra_txt = crear_barra_progreso(paginas_procesadas, total_paginas)
+                    print(f"✓ {barra_txt} | Página {page_index + 1} completada ({len(errs)} errores).")
+                    if progress_callback:
+                        progress_callback(paginas_procesadas, total_paginas)
                 except Exception as exc:
-                    print(f"La página generó una excepción: {exc}", file=sys.stderr)
+                    paginas_procesadas += 1
+                    barra_txt = crear_barra_progreso(paginas_procesadas, total_paginas)
+                    print(f"✗ {barra_txt} | La página generó una excepción: {exc}", file=sys.stderr)
+                    if progress_callback:
+                        progress_callback(paginas_procesadas, total_paginas)
 
         if stop_event and stop_event.is_set():
             print("Proceso detenido por el usuario.")
@@ -899,14 +923,6 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
                 if not original or not corregido or original.lower() == corregido.lower():
                     continue
                     
-                err_key = original.lower()
-                
-                # --- EVITAR REPETIR ERRORES (REQUERIMIENTO CLAVE) ---
-                if err_key in seen_errors_global:
-                    print(f"  [DEDUPLICADO Pág {page_num + 1}] Se omitió el error '{original}' porque ya fue marcado anteriormente.")
-                    continue
-                    
-                seen_errors_global.add(err_key)
                 total_errores_detectados += 1
                 
                 # Buscar la ubicación del error en la página
@@ -1007,7 +1023,7 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
     print(f"Copia comentada:  {output_path}")
     if txt_output_path:
         print(f"Revisión de contenido: {txt_output_path}")
-    print(f"Errores únicos detectados: {total_errores_detectados}")
+    print(f"Errores detectados: {total_errores_detectados}")
     print(f"Anotaciones agregadas en PDF: {total_anotaciones_creadas}")
     print("==================================================")
 

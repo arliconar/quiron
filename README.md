@@ -7,7 +7,7 @@ El script genera de manera automática un PDF copia anotado con todos los errore
 ## Características Clave
 
 * **Integración Nativa con `gemini-cli`:** El script localiza la instalación global de `gemini-cli` en npm y ejecuta directamente el bundle de JavaScript en Node.js. Esto evita limitaciones del intérprete de comandos `cmd.exe` o de la política de ejecución de PowerShell en Windows, logrando un procesamiento de páginas rápido y robusto.
-* **Deduplicación Global Inteligente:** Para cumplir con la restricción de **no repetir errores**, el script lleva un registro global en memoria de todas las palabras o frases incorrectas encontradas. Si un error (por ejemplo, escribir *"desarollo"* o *"aplicacion"* sin acento) se repite a lo largo del documento, el script **solo lo marcará y comentará la primera vez**, evitando saturar visualmente el PDF copia.
+* **Marcado Completo de Ocurrencias:** El script procesa y resalta todas las ocurrencias de errores encontrados a lo largo del documento, permitiendo identificar cada instancia de palabra o frase incorrecta en su contexto original.
 * **Búsqueda Avanzada de Coordenadas:** Utiliza el motor de extracción de palabras de `pymupdf` para realizar coincidencias exactas por palabra completa, previniendo falsos positivos (por ejemplo, evitar resaltar la palabra *"sol"* dentro de *"soldado"*). Si el error es una frase (como *"la base de datos fueron actualizadas"*), realiza una búsqueda de concordancia de múltiples palabras.
 * **Comentarios Académicos de Alta Calidad:** Cada error marcado en amarillo en el PDF incluye una ventana emergente de comentario detallado con:
   * El **Tipo de error** (ej. Ortografía, Acentuación, Gramática, Concordancia).
