@@ -29,7 +29,7 @@ LIGATURE_MAP = {
 }
 
 # Patrones morfológicos y de referencias académicas para reconstruir texto
-# donde la ligadura (fl, fi, ff) o guiones de rango fueron extraídos rotos o con espacios
+# donde la ligadura (fl, fi, ff) o guiones de rango fueron extraídos rotos
 RECONSTRUCTION_PATTERNS = [
     # Rangos de páginas y números en referencias/bibliografía
     (r'\bpp\.\s*(\d+)\s+(\d+)\b', r'pp. \1-\2'),
@@ -38,71 +38,51 @@ RECONSTRUCTION_PATTERNS = [
     (r'\bpág\.\s*(\d+)\s+(\d+)\b', r'pág. \1-\2'),
     (r'\bpágs\.\s*(\d+)\s+(\d+)\b', r'págs. \1-\2'),
     
-    # Palabras con 'fl'
-    (r'\bcon[\s\ue000-\uf8ff]?icto\b', 'conflicto'),
-    (r'\bcon[\s\ue000-\uf8ff]?ictos\b', 'conflictos'),
-    (r'\bcon[\s\ue000-\uf8ff]?ictiv', 'conflictiv'),
-    (r'\bin[\s\ue000-\uf8ff]?aci', 'inflaci'),
-    (r'\bin[\s\ue000-\uf8ff]?uir\b', 'influir'),
-    (r'\bin[\s\ue000-\uf8ff]?uyen', 'influyen'),
-    (r'\bin[\s\ue000-\uf8ff]?uencia', 'influencia'),
-    (r'\bin[\s\ue000-\uf8ff]?uencias', 'influencias'),
-    (r'\bin[\s\ue000-\uf8ff]?ujo\b', 'influjo'),
-    (r'\bin[\s\ue000-\uf8ff]?amaci', 'inflamaci'),
-    (r'\bre[\s\ue000-\uf8ff]?exi', 'reflexi'),
-    (r'\bre[\s\ue000-\uf8ff]?ej', 'reflej'),
-    (r'\bre[\s\ue000-\uf8ff]?ujo\b', 'reflujo'),
-    (r'\ba[\s\ue000-\uf8ff]?uent', 'afluent'),
-    (r'\ba[\s\ue000-\uf8ff]?uenci', 'afluenci'),
-    (r'\ba[\s\ue000-\uf8ff]?igi', 'afligi'),
-    (r'\b[\s\ue000-\uf8ff]?ujo\b', 'flujo'),
-    (r'\b[\s\ue000-\uf8ff]?ujos\b', 'flujos'),
-    (r'\b[\s\ue000-\uf8ff]?uido\b', 'fluido'),
-    (r'\b[\s\ue000-\uf8ff]?uidos\b', 'fluidos'),
-    (r'\b[\s\ue000-\uf8ff]?uid', 'fluid'),
-    (r'\b[\s\ue000-\uf8ff]?exib', 'flexib'),
-    (r'\b[\s\ue000-\uf8ff]?echa\b', 'flecha'),
-    (r'\b[\s\ue000-\uf8ff]?echas\b', 'flechas'),
-    (r'\b[\s\ue000-\uf8ff]?ora\b', 'flora'),
-    (r'\b[\s\ue000-\uf8ff]?ores\b', 'flores'),
-    (r'\b[\s\ue000-\uf8ff]?or\b', 'flor'),
-    (r'\b[\s\ue000-\uf8ff]?ot', 'flot'),
+    # Palabras partidas o con PUA en 'fl' (con contexto claro a ambos lados)
+    (r'\bcon(?:\s+|[\ue000-\uf8ff])icto\b', 'conflicto'),
+    (r'\bcon(?:\s+|[\ue000-\uf8ff])ictos\b', 'conflictos'),
+    (r'\bcon(?:\s+|[\ue000-\uf8ff])ictiv', 'conflictiv'),
+    (r'\bin(?:\s+|[\ue000-\uf8ff])aci', 'inflaci'),
+    (r'\bin(?:\s+|[\ue000-\uf8ff])uir\b', 'influir'),
+    (r'\bin(?:\s+|[\ue000-\uf8ff])uyen\b', 'influyen'),
+    (r'\bin(?:\s+|[\ue000-\uf8ff])uencia\b', 'influencia'),
+    (r'\bin(?:\s+|[\ue000-\uf8ff])uencias\b', 'influencias'),
+    (r'\bin(?:\s+|[\ue000-\uf8ff])ujo\b', 'influjo'),
+    (r'\bin(?:\s+|[\ue000-\uf8ff])amaci', 'inflamaci'),
+    (r'\bre(?:\s+|[\ue000-\uf8ff])exi', 'reflexi'),
+    (r'\bre(?:\s+|[\ue000-\uf8ff])ej', 'reflej'),
+    (r'\bre(?:\s+|[\ue000-\uf8ff])ujo\b', 'reflujo'),
+    (r'\ba(?:\s+|[\ue000-\uf8ff])uent', 'afluent'),
+    (r'\ba(?:\s+|[\ue000-\uf8ff])uenci', 'afluenci'),
+    (r'\ba(?:\s+|[\ue000-\uf8ff])igi', 'afligi'),
     
-    # Palabras con 'fi' / 'ff' / 'f' y casos científicos/académicos comunes
-    (r'\bPonti[\s\ue000-\uf8ff]?cia\b', 'Pontificia'),
-    (r'\bponti[\s\ue000-\uf8ff]?cia\b', 'pontificia'),
-    (r'\bDi[\s\ue000-\uf8ff]?erenti', 'Differenti'),
-    (r'\bdi[\s\ue000-\uf8ff]?erenti', 'differenti'),
-    (r'\bde[\s\ue000-\uf8ff]?nici', 'definici'),
-    (r'\bde[\s\ue000-\uf8ff]?nir\b', 'definir'),
-    (r'\bde[\s\ue000-\uf8ff]?nitiv', 'definitiv'),
-    (r'\bde[\s\ue000-\uf8ff]?nid', 'definid'),
-    (r'\bcon[\s\ue000-\uf8ff]?gura', 'configura'),
-    (r'\bcon[\s\ue000-\uf8ff]?anza\b', 'confianza'),
-    (r'\bcon[\s\ue000-\uf8ff]?ar\b', 'confiar'),
-    (r'\bcon[\s\ue000-\uf8ff]?rm', 'confirm'),
-    (r'\bsigni[\s\ue000-\uf8ff]?ica', 'significa'),
-    (r'\bbene[\s\ue000-\uf8ff]?ici', 'benefici'),
-    (r'\be[\s\ue000-\uf8ff]?ici', 'efici'),
-    (r'\be[\s\ue000-\uf8ff]?caz\b', 'eficaz'),
-    (r'\be[\s\ue000-\uf8ff]?caces\b', 'eficaces'),
-    (r'\be[\s\ue000-\uf8ff]?cacia\b', 'eficacia'),
-    (r'\bdi[\s\ue000-\uf8ff]?cult', 'dificult'),
-    (r'\bdi[\s\ue000-\uf8ff]?ícil', 'difícil'),
-    (r'\bdi[\s\ue000-\uf8ff]?icil', 'difícil'),
-    (r'\bdi[\s\ue000-\uf8ff]?erenc', 'diferenc'),
-    (r'\bdi[\s\ue000-\uf8ff]?erent', 'diferent'),
-    (r'\bin[\s\ue000-\uf8ff]?ormaci', 'informaci'),
-    (r'\bin[\s\ue000-\uf8ff]?orme\b', 'informe'),
-    (r'\bin[\s\ue000-\uf8ff]?ormes\b', 'informes'),
-    (r'\bin[\s\ue000-\uf8ff]?ormat', 'informat'),
-    (r'\b[\s\ue000-\uf8ff]?iltro\b', 'filtro'),
-    (r'\b[\s\ue000-\uf8ff]?iltros\b', 'filtros'),
-    (r'\b[\s\ue000-\uf8ff]?iltr', 'filtr'),
-    (r'\b[\s\ue000-\uf8ff]?inal\b', 'final'),
-    (r'\b[\s\ue000-\uf8ff]?inanz', 'finanz'),
-    (r'\b[\s\ue000-\uf8ff]?ísica\b', 'física'),
-    (r'\b[\s\ue000-\uf8ff]?isic', 'fisic'),
+    # Palabras partidas o con PUA en 'fi' / 'ff' / 'f'
+    (r'\bPonti(?:\s+|[\ue000-\uf8ff])cia\b', 'Pontificia'),
+    (r'\bponti(?:\s+|[\ue000-\uf8ff])cia\b', 'pontificia'),
+    (r'\bDi(?:\s+|[\ue000-\uf8ff])erenti', 'Differenti'),
+    (r'\bdi(?:\s+|[\ue000-\uf8ff])erenti', 'differenti'),
+    (r'\bde(?:\s+|[\ue000-\uf8ff])nici', 'definici'),
+    (r'\bde(?:\s+|[\ue000-\uf8ff])nir\b', 'definir'),
+    (r'\bde(?:\s+|[\ue000-\uf8ff])nitiv', 'definitiv'),
+    (r'\bde(?:\s+|[\ue000-\uf8ff])nid', 'definid'),
+    (r'\bcon(?:\s+|[\ue000-\uf8ff])gura', 'configura'),
+    (r'\bcon(?:\s+|[\ue000-\uf8ff])anza\b', 'confianza'),
+    (r'\bcon(?:\s+|[\ue000-\uf8ff])ar\b', 'confiar'),
+    (r'\bcon(?:\s+|[\ue000-\uf8ff])rm', 'confirm'),
+    (r'\bsigni(?:\s+|[\ue000-\uf8ff])ica', 'significa'),
+    (r'\bbene(?:\s+|[\ue000-\uf8ff])ici', 'benefici'),
+    (r'\be(?:\s+|[\ue000-\uf8ff])caz\b', 'eficaz'),
+    (r'\be(?:\s+|[\ue000-\uf8ff])caces\b', 'eficaces'),
+    (r'\be(?:\s+|[\ue000-\uf8ff])cacia\b', 'eficacia'),
+    (r'\bdi(?:\s+|[\ue000-\uf8ff])cult', 'dificult'),
+    (r'\bdi(?:\s+|[\ue000-\uf8ff])ícil', 'difícil'),
+    (r'\bdi(?:\s+|[\ue000-\uf8ff])icil', 'difícil'),
+    (r'\bdi(?:\s+|[\ue000-\uf8ff])erenc', 'diferenc'),
+    (r'\bdi(?:\s+|[\ue000-\uf8ff])erent', 'diferent'),
+    (r'\bin(?:\s+|[\ue000-\uf8ff])ormaci', 'informaci'),
+    (r'\bin(?:\s+|[\ue000-\uf8ff])orme\b', 'informe'),
+    (r'\bin(?:\s+|[\ue000-\uf8ff])ormes\b', 'informes'),
+    (r'\bin(?:\s+|[\ue000-\uf8ff])ormat', 'informat'),
 ]
 
 # Expresiones regulares precompiladas para máxima velocidad
@@ -226,11 +206,13 @@ SYSTEM_PROMPT_JSON_INSTRUCTIONS = (
     "]\n\n"
     "REGLAS CRÍTICAS:\n"
     "1. Devuelve ÚNICAMENTE el arreglo JSON. No incluyas textos adicionales, introducciones, ni bloques de código markdown como ```json o ```.\n"
-    "2. Si no hay errores, devuelve un arreglo vacío `[]`.\n"
-    "3. La palabra o frase en 'original' DEBE coincidir carácter por carácter con el texto original. Presta mucha atención a mayúsculas, minúsculas y acentos.\n"
-    "4. No inventes errores de estilo subjetivos. Concéntrate en errores objetivos.\n"
-    "5. No corrijas nombres propios de herramientas o tecnologías conocidas (ej. Python, PostgreSQL, Docker, etc.).\n"
-    "6. Si encuentras una palabra que parece haber perdido letras o tener espacios extra por problemas de extracción de fuentes del PDF (ej. ligaduras como 'fl' o 'fi'), devuélvela corregida con su grafía completa y correcta en español.\n"
+    "2. Si no hay errores objetivos en el texto, devuelve un arreglo vacío `[]`.\n"
+    "3. La palabra o frase en 'original' DEBE coincidir carácter por carácter con el texto original y DEBE ser diferente de 'corregido'.\n"
+    "4. NO marques como error palabras o frases válidas y bien escritas en español (ej. 'de otros', 'por otro lado', 'en otro', etc. son completamente correctas).\n"
+    "5. NO supongas fallos de extracción tipográfica ni ligaduras en expresiones que ya tienen coherencia y sentido gramatical en español.\n"
+    "6. No inventes errores de estilo subjetivos ni sugerencias innecesarias. Concéntrate en errores gramaticales u ortográficos reales y objetivos.\n"
+    "7. No corrijas nombres propios de herramientas o tecnologías conocidas (ej. Python, PostgreSQL, Docker, etc.).\n"
+    "8. Si encuentras una palabra genuinamente rota o fragmentada que no existe en el diccionario español (ej. 'con icto' -> 'conflicto', 'in uencia' -> 'influencia'), repórtala con su grafía correcta.\n"
 )
 
 DEFAULT_DICTAMEN_PROMPT = (
@@ -773,18 +755,12 @@ def find_text_bounds(page, target: str) -> list:
         
     cleaned_target = clean_ligatures(target).strip()
     
-    # Lista de variantes a buscar con search_for
+    # Lista de variantes seguras a buscar con search_for
     search_candidates = [
         target,
         cleaned_target,
         target.replace(" ", "-"),
         target.replace("-", " "),
-        target.replace(" ", "fi"),
-        target.replace(" ", "fl"),
-        target.replace(" ", "ff"),
-        target.replace("ff", " "),
-        target.replace("fi", " "),
-        target.replace("fl", " "),
         target.replace(" ", ""),
     ]
     seen_cand = set()
@@ -919,7 +895,8 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
                 tipo = err.get("tipo", "ortografía").strip()
                 explicacion = err.get("explicacion", "").strip()
                 
-                if not original:
+                # Filtrar entradas vacías o falsos positivos idénticos
+                if not original or not corregido or original.lower() == corregido.lower():
                     continue
                     
                 err_key = original.lower()
