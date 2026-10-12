@@ -17,6 +17,14 @@ try:
 except ImportError:
     HAS_PDFPLUMBER = False
 
+try:
+    from spellchecker import SpellChecker
+    _SPELL_ES = SpellChecker(language="es", distance=1)
+    HAS_SPELL = True
+except Exception:
+    _SPELL_ES = None
+    HAS_SPELL = False
+
 # Mapeo explícito de ligaduras tipográficas Unicode estándar
 LIGATURE_MAP = {
     "\ufb00": "ff",
@@ -27,6 +35,29 @@ LIGATURE_MAP = {
     "\ufb05": "ft",
     "\ufb06": "st",
 }
+
+# Codificación T1 (Cork) de LaTeX: fuentes sin mapa ToUnicode exportan las
+# ligaduras y signos como caracteres de control (ej. 'veri\x1ccación').
+# pdfplumber los entrega como (cid:28); PyMuPDF como el carácter literal.
+T1_CONTROL_MAP = {
+    0x10: "\u201c",  # comillas dobles de apertura
+    0x11: "\u201d",  # comillas dobles de cierre
+    0x15: "\u2013",  # guion corto (en dash)
+    0x16: "\u2014",  # guion largo (em dash)
+    0x1B: "ff",
+    0x1C: "fi",
+    0x1D: "fl",
+    0x1E: "ffi",
+    0x1F: "ffl",
+}
+T1_TRANSLATE = {code: rep for code, rep in T1_CONTROL_MAP.items()}
+# Cualquier otro carácter de control (excepto \t y \n) se convierte en espacio
+for _c in range(0x00, 0x20):
+    if _c not in T1_TRANSLATE and _c not in (0x09, 0x0A):
+        T1_TRANSLATE[_c] = " "
+
+# Secuencias candidatas para reconstruir un glifo perdido (orden de prioridad)
+LIGATURE_CANDIDATES = ["fi", "fl", "ff", "ffi", "ffl"]
 
 # Patrones morfológicos y de referencias académicas para reconstruir texto
 # donde la ligadura (fl, fi, ff) o guiones de rango fueron extraídos rotos
@@ -93,48 +124,107 @@ COMPILED_RECONSTRUCTIONS = [
 DEHYPHEN_RE = re.compile(r'(\b\w+)-\n(\w+\b)')
 PUA_RE = re.compile(r'[\ue000-\uf8ff]')
 CID_RE = re.compile(r'\(cid:(\d+)\)')
+# Palabra que contiene uno o más glifos no resueltos (PUA o carácter de reemplazo)
+BROKEN_GLYPH_WORD_RE = re.compile(r'[^\W\d_]*[\ue000-\uf8ff\ufffd]+[^\W\d_]*')
+# Dos fragmentos alfabéticos separados por un solo espacio (posible ligadura perdida)
+SPLIT_PAIR_RE = re.compile(r'\b([^\W\d_]{1,})( )([^\W\d_]{2,})\b')
+WORD_RE = re.compile(r'[^\W\d_]{3,}')
+SUSPICIOUS_RE = re.compile(r'[\x00-\x08\x0b-\x1f\ue000-\uf8ff\ufffd]|\(cid:\d+\)')
 
 def decode_cid_match(m) -> str:
     """Traduce códigos (cid:NNN) de fuentes PDF/pdfminer a caracteres legibles (ej. (cid:243) -> ó)."""
     try:
         code = int(m.group(1))
-        if 32 <= code <= 255:
+        if code < 32:
+            # Codificación T1 de LaTeX (ej. (cid:28) -> 'fi')
+            return T1_CONTROL_MAP.get(code, "")
+        if code <= 255:
             return bytes([code]).decode('cp1252', errors='replace')
-        elif code > 255:
-            return chr(code)
+        return chr(code)
     except Exception:
         pass
     return ""
+
+def _is_known_word(word: str) -> bool:
+    """Indica si una palabra existe en el diccionario español."""
+    if not HAS_SPELL or not word:
+        return False
+    return word.lower() in _SPELL_ES
+
+def _match_case(template: str, word: str) -> str:
+    """Aplica el patrón de mayúsculas de 'template' a 'word'."""
+    if template.isupper() and len(template) > 1:
+        return word.upper()
+    if template[:1].isupper():
+        return word[:1].upper() + word[1:]
+    return word
+
+def _resolve_broken_glyph_word(match) -> str:
+    """Sustituye glifos desconocidos probando ligaduras hasta formar una palabra del diccionario."""
+    word = match.group(0)
+    parts = re.split(r'[\ue000-\uf8ff\ufffd]+', word)
+    if HAS_SPELL and len(parts) == 2:
+        for cand in LIGATURE_CANDIDATES + ["f", ""]:
+            candidate = parts[0] + cand + parts[1]
+            if _is_known_word(candidate):
+                return candidate
+    # Sin coincidencia: se elimina el glifo (comportamiento anterior)
+    return "".join(parts)
+
+def _rejoin_split_ligatures(text: str) -> str:
+    """
+    Repara palabras partidas por una ligadura perdida y sustituida por espacio
+    (ej. 'veri cación' -> 'verificación'), solo si el resultado está en el diccionario
+    y al menos uno de los fragmentos no es una palabra válida por sí misma.
+    """
+    if not HAS_SPELL:
+        return text
+
+    def repl(m):
+        left, right = m.group(1), m.group(3)
+        if _is_known_word(left) and _is_known_word(right):
+            return m.group(0)
+        for cand in LIGATURE_CANDIDATES:
+            joined = left + cand + right
+            if _is_known_word(joined):
+                return _match_case(left, joined)
+        return m.group(0)
+
+    return SPLIT_PAIR_RE.sub(repl, text)
 
 def clean_ligatures(text: str) -> str:
     """
     Heurística profunda de limpieza y reconstrucción de texto:
     1. Traduce códigos (cid:NNN) generados por pdfminer / pdfplumber.
-    2. Normaliza ligaduras Unicode estándar (fi, fl, ff, ffi, ffl, etc.).
-    3. Resuelve dehyphenation (guiones de corte de palabra al final de línea).
-    4. Normaliza caracteres Unicode mediante compatibilidad NFKC.
-    5. Reconstruye palabras rotas por huecos o pérdidas de glifos en español/académico.
-    6. Limpia códigos residuales de la zona de uso privado (PUA).
+    2. Traduce caracteres de control de la codificación T1 de LaTeX (\\x1c -> fi, etc.).
+    3. Normaliza ligaduras Unicode estándar (fi, fl, ff, ffi, ffl, etc.).
+    4. Resuelve dehyphenation (guiones de corte de palabra al final de línea).
+    5. Normaliza caracteres Unicode mediante compatibilidad NFKC.
+    6. Reconstruye palabras rotas por huecos o pérdidas de glifos en español/académico.
+    7. Resuelve glifos de uso privado (PUA) con ayuda de un diccionario español.
     """
     if not text:
         return ""
     
-    # 1. Traducir códigos CID no mapeados de pdfminer (ej. (cid:243) -> ó)
+    # 1. Traducir códigos CID no mapeados de pdfminer (ej. (cid:243) -> ó, (cid:28) -> fi)
     if "(cid:" in text:
         text = CID_RE.sub(decode_cid_match, text)
     
-    # 2. Ligaduras estándar conocidas
+    # 2. Codificación T1 de LaTeX exportada como caracteres de control
+    text = text.translate(T1_TRANSLATE)
+    
+    # 3. Ligaduras estándar conocidas
     for lig, rep in LIGATURE_MAP.items():
         if lig in text:
             text = text.replace(lig, rep)
         
-    # 3. Dehyphenation básico
+    # 4. Dehyphenation básico
     text = DEHYPHEN_RE.sub(r'\1\2', text)
     
-    # 4. Normalización NFKC
+    # 5. Normalización NFKC
     text = unicodedata.normalize("NFKC", text)
     
-    # 5. Reconstrucción morfológica con regex precompiladas
+    # 6. Reconstrucción morfológica con regex precompiladas
     for compiled_re, replacement in COMPILED_RECONSTRUCTIONS:
         def repl(match, rep=replacement):
             matched = match.group(0)
@@ -142,9 +232,13 @@ def clean_ligatures(text: str) -> str:
                 return rep.capitalize()
             return rep
         text = compiled_re.sub(repl, text)
-        
-    # 6. Limpieza residual de caracteres de uso privado no asignados
+    
+    # 7. Glifos PUA: reconstrucción con diccionario y limpieza residual
+    text = BROKEN_GLYPH_WORD_RE.sub(_resolve_broken_glyph_word, text)
     text = PUA_RE.sub('', text)
+    
+    # 8. Palabras partidas por una ligadura convertida en espacio
+    text = _rejoin_split_ligatures(text)
     
     return text
 
@@ -154,36 +248,71 @@ def fast_normalize_word(text: str) -> str:
         return ""
     if "(cid:" in text:
         text = CID_RE.sub(decode_cid_match, text)
+    text = text.translate(T1_TRANSLATE)
     for lig, rep in LIGATURE_MAP.items():
         if lig in text:
             text = text.replace(lig, rep)
     return unicodedata.normalize("NFKC", text).lower()
 
+def _text_quality_penalty(raw: str, cleaned: str) -> int:
+    """
+    Calcula una penalización de calidad para el texto extraído de una página.
+    Menor es mejor: cuenta glifos sospechosos residuales y palabras desconocidas.
+    """
+    penalty = len(SUSPICIOUS_RE.findall(cleaned)) * 5
+    if HAS_SPELL:
+        words = WORD_RE.findall(cleaned)
+        penalty += len(_SPELL_ES.unknown(words)) if words else 0
+    return penalty
+
 def extract_all_pages_text(pdf_path: str, doc) -> list:
     """
-    Extrae el texto de todas las páginas de un PDF usando pdfplumber como motor principal
-    para máxima fidelidad en fuentes y ligaduras rotas, con respaldo en PyMuPDF.
+    Extrae el texto de todas las páginas con PyMuPDF y pdfplumber, y para cada
+    página conserva la versión con menos glifos rotos / palabras desconocidas.
+    PyMuPDF se prefiere en caso de empate (mejor manejo de ligaduras y orden).
     """
-    pages_text = []
     total_pages = len(doc)
-    
+    print("Extrayendo texto con PyMuPDF...")
+    mupdf_pages = []
+    for page_num in range(total_pages):
+        raw = doc[page_num].get_text("text") or ""
+        mupdf_pages.append((raw, clean_ligatures(raw).strip()))
+
+    plumber_pages = []
     if HAS_PDFPLUMBER and pdf_path and os.path.exists(pdf_path):
         try:
-            print("Extrayendo texto con motor de alta precisión (pdfplumber)...")
+            print("Extrayendo texto con pdfplumber para comparación...")
             with pdfplumber.open(pdf_path) as pdf:
                 for p in pdf.pages:
-                    txt = p.extract_text(layout=False) or ""
-                    pages_text.append(clean_ligatures(txt).strip())
+                    raw = p.extract_text(layout=False) or ""
+                    plumber_pages.append((raw, clean_ligatures(raw).strip()))
         except Exception as e:
-            print(f"Aviso con pdfplumber: {e}, usando PyMuPDF...", file=sys.stderr)
-            pages_text = []
-            
-    if not pages_text:
-        print("Extrayendo texto con PyMuPDF...")
-        for page_num in range(total_pages):
-            txt = doc[page_num].get_text("text") or ""
-            pages_text.append(clean_ligatures(txt).strip())
-            
+            print(f"Aviso con pdfplumber: {e}, se usará solo PyMuPDF.", file=sys.stderr)
+            plumber_pages = []
+
+    pages_text = []
+    elegidas_plumber = 0
+    for i in range(total_pages):
+        m_raw, m_clean = mupdf_pages[i]
+        if i >= len(plumber_pages):
+            pages_text.append(m_clean)
+            continue
+        p_raw, p_clean = plumber_pages[i]
+        if not m_clean:
+            pages_text.append(p_clean)
+            elegidas_plumber += bool(p_clean)
+            continue
+        if not p_clean:
+            pages_text.append(m_clean)
+            continue
+        if _text_quality_penalty(p_raw, p_clean) < _text_quality_penalty(m_raw, m_clean):
+            pages_text.append(p_clean)
+            elegidas_plumber += 1
+        else:
+            pages_text.append(m_clean)
+
+    if plumber_pages:
+        print(f"Extracción: {total_pages - elegidas_plumber} páginas con PyMuPDF, {elegidas_plumber} con pdfplumber.")
     return pages_text
 
 # Configuración del Prompt del Sistema para Gemini
@@ -209,10 +338,10 @@ SYSTEM_PROMPT_JSON_INSTRUCTIONS = (
     "2. Si no hay errores objetivos en el texto, devuelve un arreglo vacío `[]`.\n"
     "3. La palabra o frase en 'original' DEBE coincidir carácter por carácter con el texto original y DEBE ser diferente de 'corregido'.\n"
     "4. NO marques como error palabras o frases válidas y bien escritas en español (ej. 'de otros', 'por otro lado', 'en otro', etc. son completamente correctas).\n"
-    "5. NO supongas fallos de extracción tipográfica ni ligaduras en expresiones que ya tienen coherencia y sentido gramatical en español.\n"
+    "5. El texto fue extraído automáticamente de un PDF. Las ligaduras tipográficas (fi, fl, ff, ffi, ffl) pueden aparecer perdidas, sustituidas por un espacio o por un símbolo extraño (ej. 'veri cación', 'vericación', 'con icto', 'de nir'). En el documento original estas palabras se ven CORRECTAS.\n"
     "6. No inventes errores de estilo subjetivos ni sugerencias innecesarias. Concéntrate en errores gramaticales u ortográficos reales y objetivos.\n"
     "7. No corrijas nombres propios de herramientas o tecnologías conocidas (ej. Python, PostgreSQL, Docker, etc.).\n"
-    "8. Si encuentras una palabra genuinamente rota o fragmentada que no existe en el diccionario español (ej. 'con icto' -> 'conflicto', 'in uencia' -> 'influencia'), repórtala con su grafía correcta.\n"
+    "8. NUNCA reportes como error una palabra cuya única diferencia con la forma correcta sea la falta de 'fi', 'fl', 'ff', 'ffi' o 'ffl', ni palabras partidas por un espacio en ese punto. Son artefactos de extracción, NO errores del autor.\n"
 )
 
 DEFAULT_DICTAMEN_PROMPT = (
@@ -819,6 +948,57 @@ def find_text_bounds(page, target: str) -> list:
         
     return rects
 
+_LIGATURE_SPLIT_RE = re.compile(r'(ffi|ffl|ff|fi|fl)', re.IGNORECASE)
+
+def _ligature_variants(lig: str) -> list:
+    """Formas en que una ligadura puede aparecer rota tras la extracción."""
+    variants = {lig, "", " ", "-"}
+    for i in range(len(lig)):
+        for j in range(i + 1, len(lig) + 1):
+            variants.add(lig[i:j])
+    return sorted(variants, key=len, reverse=True)
+
+def es_falso_positivo_ligadura(original: str, corregido: str, explicacion: str = "") -> bool:
+    """
+    Detecta sugerencias causadas por ligaduras perdidas en la extracción:
+    'original' y 'corregido' solo difieren en secuencias fi/fl/ff/ffi/ffl
+    (eliminadas, partidas o reemplazadas por espacio/guion).
+    """
+    if not original or not corregido:
+        return False
+    if "ligadura" in (explicacion or "").lower():
+        return True
+    if original.lower() == corregido.lower():
+        return False
+    parts = _LIGATURE_SPLIT_RE.split(corregido)
+    if len(parts) == 1:
+        return False
+    pattern = []
+    for idx, part in enumerate(parts):
+        if idx % 2 == 1:
+            alts = "|".join(re.escape(v) for v in _ligature_variants(part.lower()))
+            pattern.append(f"(?:{alts})")
+        else:
+            pattern.append(re.escape(part))
+    return re.fullmatch("".join(pattern), original, re.IGNORECASE) is not None
+
+def filtrar_falsos_positivos_ligadura(errs) -> tuple:
+    """Devuelve (errores_filtrados, cantidad_descartada)."""
+    if not isinstance(errs, list):
+        return [], 0
+    filtrados = []
+    for err in errs:
+        if not isinstance(err, dict):
+            continue
+        if es_falso_positivo_ligadura(
+            str(err.get("original", "")).strip(),
+            str(err.get("corregido", "")).strip(),
+            str(err.get("explicacion", "")),
+        ):
+            continue
+        filtrados.append(err)
+    return filtrados, len(errs) - len(filtrados)
+
 def crear_barra_progreso(actual: int, total: int, ancho: int = 20) -> str:
     """Genera una barra de progreso visual en formato texto."""
     if total <= 0:
@@ -877,6 +1057,9 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
                 errs = run_agent_api(page_text, api_llm, api_model)
             else:
                 errs = run_agent_cli(page_text, page_index + 1, agent_name, cli_model)
+            errs, descartados = filtrar_falsos_positivos_ligadura(errs)
+            if descartados:
+                print(f"  [Pág {page_index + 1}] {descartados} falso(s) positivo(s) por ligadura descartado(s).")
             return page_index, errs
 
         print(f"\n--- Analizando ortografía en paralelo ({num_agents} instancias) ---")
