@@ -68,6 +68,23 @@ class ReviewComment:
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
+    @property
+    def location_label(self) -> str:
+        """Convierte identificadores técnicos como P01-B02 en 'Página 1, párrafo 3' o 'Página 1, figura 1'."""
+        m_img = re.search(r"P(\d+)-IMG(\d+)", self.target_id)
+        if m_img:
+            p_num = int(m_img.group(1))
+            img_num = int(m_img.group(2)) + 1
+            return f"Página {p_num}, figura {img_num}"
+
+        m_block = re.search(r"P(\d+)-B(\d+)", self.target_id)
+        if m_block:
+            p_num = int(m_block.group(1))
+            parr_num = int(m_block.group(2)) + 1
+            return f"Página {p_num}, párrafo {parr_num}"
+
+        return f"Página {self.page}"
+
 
 @dataclass
 class TextBlockMetadata:
@@ -253,8 +270,8 @@ class AgyClient:
 
 [REGLAS ESTRICTAS DE SALIDA]
 1. Audita el texto e imágenes proporcionados respetando los identificadores de bloque:
-   - Bloques de texto: [P{pagina}-B{bloque}]
-   - Bloques de figuras/imágenes: [P{pagina}-IMG{indice}]
+   - Bloques de texto: [P{{pagina}}-B{{bloque}}]
+   - Bloques de figuras/imágenes: [P{{pagina}}-IMG{{indice}}]
 2. Si un problema reside en una figura/imagen (gráfica errónea, falta de unidades en ejes, diagrama incompleto, discrepancia visual con el texto), utiliza el target_id de la imagen (ej. P17-IMG0), la página correspondiente y en 'quote' la leyenda/título de la figura o el archivo.
 3. Para cada problema detectado, extrae el target_id exacto (ej. P1-B0 o P17-IMG0), el número de página como entero, y la quote textual idéntica a como aparece en el texto o pie de figura.
 4. El campo 'category' DEBE ser estrictamente "{category}".
@@ -1054,9 +1071,17 @@ class PdfAnnotator:
                 # Configurar color, metadatos y contenido emergente
                 if annot is not None:
                     annot.set_colors(stroke=color)
+                    contenido_anotacion = (
+                        f"Ubicación: {comment.location_label}\n"
+                        f"Revisor: {comment.reviewer_name}\n"
+                        f"Severidad: {comment.severity.capitalize()}\n"
+                        f"Categoría: {comment.category.replace('_', ' ').capitalize()}\n\n"
+                        f"Observación:\n{comment.comment}"
+                    )
                     annot.set_info(
-                        title=f"[{comment.reviewer_name}] ({comment.severity.upper()})",
-                        content=f"Categoría: {comment.category}\n\nObservación:\n{comment.comment}"
+                        title="Quirón",
+                        subject=f"Metodología: {comment.reviewer_name}",
+                        content=contenido_anotacion
                     )
                     annot.update()
                     applied_count += 1
@@ -1149,6 +1174,8 @@ class ThesisReviewPipeline:
             all_comments.extend(self.style_agent.evaluate(sec.full_text))
 
         logger.info("Auditoría finalizada. Total de observaciones detectadas: %d", len(all_comments))
+        for idx, h in enumerate(all_comments, 1):
+            logger.info("  [%02d] %s | %s (%s): %s", idx, h.location_label, h.reviewer_name, h.severity.upper(), h.comment[:80] + "..." if len(h.comment) > 80 else h.comment)
 
         # 4. Inyección Visual de Anotaciones en el PDF
         annotator = PdfAnnotator(metadata_index=metadata_index)
@@ -1242,7 +1269,7 @@ if __name__ == "__main__":
             print("REPORTE DE OBSERVACIONES REGISTRADAS EN EL PDF:")
             print("-" * 80)
             for idx, h in enumerate(hallazgos, 1):
-                print(f"{idx:02d}. [{h.reviewer_name}] | Pág. {h.page} ({h.target_id}) | {h.severity.upper()}")
+                print(f"{idx:02d}. [{h.reviewer_name}] | {h.location_label} | {h.severity.upper()}")
                 print(f"    Categoría : {h.category}")
                 print(f"    Cita      : \"{h.quote}\"")
                 print(f"    Comentario: {h.comment}\n")
