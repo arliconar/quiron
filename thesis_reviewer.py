@@ -11,6 +11,7 @@ Módulos:
 
 from __future__ import annotations
 
+import os
 import json
 import logging
 import re
@@ -144,13 +145,28 @@ class AgyClient:
     def query(self, prompt: str) -> str:
         """
         Ejecuta `agy -p "<prompt>"` de forma no interactiva y captura stdout.
+        Para evitar desbordamientos de buffer o límites de argumentos en la consola de Windows,
+        si el prompt es extenso se almacena en un archivo temporal y se le indica a agy que lo lea.
         """
         if not self.is_installed:
             raise RuntimeError(
                 f"antigravity-cli ('{self.cli_command}') no está instalado o no se encuentra en el PATH."
             )
 
-        cmd = [self.cli_command, "--dangerously-skip-permissions", "-p", prompt]
+        # Si el prompt es muy largo (> 2000 caracteres), usar archivo temporal para Windows CLI
+        temp_file = None
+        prompt_arg = prompt
+        if len(prompt) > 2000:
+            import tempfile
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, suffix=".txt") as tf:
+                tf.write(prompt)
+                temp_file = tf.name
+            prompt_arg = (
+                f"Lee atentamente el archivo completo en: {temp_file}\n"
+                f"Sigue todas las instrucciones y reglas descritas en dicho archivo y genera tu respuesta."
+            )
+
+        cmd = [self.cli_command, "--dangerously-skip-permissions", "-p", prompt_arg]
         logger.debug("Invocando antigravity-cli: %s", " ".join(cmd[:2]))
 
         try:
@@ -168,6 +184,12 @@ class AgyClient:
         except Exception as exc:
             logger.error("Error al invocar '%s': %s", self.cli_command, exc)
             raise
+        finally:
+            if temp_file and os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except Exception:
+                    pass
 
         if result.returncode != 0:
             err_msg = result.stderr.strip() or result.stdout.strip()
@@ -411,28 +433,24 @@ class PdfStructuredExtractor:
 
 class SectionSplitter:
     """
-    Segmenta el documento en secciones canónicas sin depender del índice (TOC).
-    Utiliza tipografía, coincidencia léxica académica y coordenadas verticales (y0)
-    para permitir múltiples secciones en la misma página física con solapamiento (overlap).
+    Segmenta el documento en capítulos académicos reales y los agrupa
+    en categorías canónicas para que cada Agente Sinodal audite sus áreas pertinentes.
     """
+
+    CHAPTER_RE = re.compile(r"^(?:cap[íi]tulo\s+)?(\d+)\s+([A-ZÁÉÍÓÚ].*)", re.I)
 
     CANONICAL_SECTIONS: Dict[str, List[re.Pattern]] = {
         "Planteamiento/Objetivos": [
-            re.compile(r"^(?:cap[ií]tulo\s+\d+[:.\s]*)?(?:planteamiento|problem[aá]tica|justificaci[oó]n|hip[oó]tesis|objetivos?)", re.I),
-            re.compile(r"^(?:1\.?|i\.?)\s+(?:introducci[oó]n|planteamiento|objetivos?)", re.I),
-            re.compile(r"objetivos?\s+(?:generales?|espec[ií]ficos?)", re.I),
+            re.compile(r"(?:planteamiento|problem[aá]tica|justificaci[oó]n|hip[oó]tesis|objetivos?|introducci[oó]n)", re.I),
         ],
         "Marco Teórico/Estado del Arte": [
-            re.compile(r"^(?:cap[ií]tulo\s+\d+[:.\s]*)?(?:marco\s+te[oó]rico|estado\s+del\s+arte|antecedentes|marco\s+conceptual|fundamentaci[oó]n)", re.I),
-            re.compile(r"^(?:2\.?|ii\.?)\s+(?:marco\s+te[oó]rico|estado\s+del\s+arte)", re.I),
+            re.compile(r"(?:marco\s+te[oó]rico|estado\s+del\s+arte|antecedentes|marco\s+conceptual|fundamentaci[oó]n)", re.I),
         ],
         "Metodología": [
-            re.compile(r"^(?:cap[ií]tulo\s+\d+[:.\s]*)?(?:metodolog[ií]a|dise[ñn]o\s+experimental|materiales\s+y\s+m[eé]todos|desarrollo\s+experimental|arquitectura\s+propuesta)", re.I),
-            re.compile(r"^(?:3\.?|iii\.?)\s+(?:metodolog[ií]a|desarrollo)", re.I),
+            re.compile(r"(?:metodolog[ií]a|planeaci[oó]n|dise[ñn]o|requerimientos?|conceptos?|manufactura|an[aá]lisis\s+de\s+elementos\s+finitos|fea|materiales\s+y\s+m[eé]todos|modelo\s+matem[aá]tico|cinem[aá]tic|din[aá]mic|control|modos\s+deslizantes|identificaci[oó]n|interfaz|hmi)", re.I),
         ],
         "Resultados/Discusión": [
-            re.compile(r"^(?:cap[ií]tulo\s+\d+[:.\s]*)?(?:resultados|an[aá]lisis\s+de\s+resultados|discusi[oó]n|pruebas\s+y\s+evaluaci[oó]n|conclusiones)", re.I),
-            re.compile(r"^(?:4\.?|iv\.?|5\.?|v\.?)\s+(?:resultados|discusi[oó]n|conclusiones)", re.I),
+            re.compile(r"(?:resultados|an[aá]lisis\s+de\s+resultados|discusi[oó]n|pruebas|evaluaci[oó]n|conclusiones?|trabajo\s+futuro|recomendaciones?)", re.I),
         ],
     }
 
@@ -440,37 +458,55 @@ class SectionSplitter:
         self.heading_min_size = heading_min_size
         self.overlap_count = overlap_count
 
-    def _match_section_name(self, text: str) -> Optional[str]:
-        clean = text.strip()
-        for canonical_name, patterns in self.CANONICAL_SECTIONS.items():
+    def categorize_title(self, title: str) -> str:
+        for canonical, patterns in self.CANONICAL_SECTIONS.items():
             for pat in patterns:
-                if pat.search(clean):
-                    return canonical_name
-        return None
+                if pat.search(title):
+                    return canonical
+        return "Metodología"  # Los capítulos de desarrollo técnico caen naturalmente aquí
 
-    def split(self, blocks: List[TextBlockMetadata]) -> Dict[str, Section]:
+    def split(self, blocks: List[TextBlockMetadata]) -> List[Section]:
+        """
+        Segmenta secuencialmente todos los capítulos del documento.
+        Retorna la lista ordenada de capítulos detectados.
+        """
         if not blocks:
-            return {}
+            return []
 
         body_sizes = [b.avg_font_size for b in blocks if not b.is_heading_candidate]
         body_font_base = (sum(body_sizes) / len(body_sizes)) if body_sizes else 11.0
 
-        detected_headings: List[Tuple[int, str, TextBlockMetadata]] = []
+        detected_headings: List[Tuple[int, str, str, TextBlockMetadata]] = []
+        expected_next_chap = 1
 
         for idx, block in enumerate(blocks):
+            clean = block.text.strip()
             is_large = block.max_font_size >= self.heading_min_size
             is_bold_title = block.is_bold and (block.max_font_size >= body_font_base * 1.15)
-            is_concise = len(block.text.split()) <= 15
+            is_concise = len(clean.split()) <= 15
 
             if (is_large or is_bold_title) and is_concise:
-                matched_sec = self._match_section_name(block.text)
-                if matched_sec:
-                    if not detected_headings or detected_headings[-1][1] != matched_sec:
-                        detected_headings.append((idx, matched_sec, block))
-                        logger.info(
-                            "Encabezado detectado: '%s' -> %s [P%d, y0=%.1f]",
-                            block.text[:40], matched_sec, block.page, block.bbox[1]
-                        )
+                m = self.CHAPTER_RE.match(clean)
+                if m:
+                    chap_num_str = m.group(1)
+                    if "." not in chap_num_str:
+                        num = int(chap_num_str)
+                        if num == expected_next_chap or (num > expected_next_chap and num <= expected_next_chap + 2):
+                            title = m.group(2).strip()
+                            # Verificar si el siguiente bloque es continuación del título
+                            if idx + 1 < len(blocks):
+                                next_b = blocks[idx + 1]
+                                if next_b.page == block.page and next_b.max_font_size >= self.heading_min_size and len(next_b.text.split()) <= 10:
+                                    title += " " + next_b.text.strip()
+
+                            canonical = self.categorize_title(title)
+                            full_heading = f"Capítulo {num}: {title}"
+                            detected_headings.append((idx, canonical, full_heading, block))
+                            logger.info(
+                                "Capítulo detectado: '%s' -> %s [P%d, y0=%.1f]",
+                                full_heading, canonical, block.page, block.bbox[1]
+                            )
+                            expected_next_chap = num + 1
 
         if not detected_headings:
             fallback = Section(
@@ -480,27 +516,26 @@ class SectionSplitter:
                 start_y0=blocks[0].bbox[1],
                 blocks=blocks,
             )
-            return {"Planteamiento/Objetivos": fallback, "Metodología": fallback}
+            return [fallback]
 
-        sections: Dict[str, Section] = {}
-        for h_idx, (start_idx, canonical_name, heading_block) in enumerate(detected_headings):
+        sections: List[Section] = []
+        for h_idx, (start_idx, canonical_name, heading_title, heading_block) in enumerate(detected_headings):
             end_idx = detected_headings[h_idx + 1][0] if (h_idx + 1 < len(detected_headings)) else len(blocks)
             section_blocks = blocks[start_idx:end_idx]
 
-            # Solapamiento (overlap) de los últimos N bloques de la sección previa
             overlap: List[TextBlockMetadata] = []
             if start_idx > 0 and self.overlap_count > 0:
                 overlap_start = max(0, start_idx - self.overlap_count)
                 overlap = blocks[overlap_start:start_idx]
 
-            sections[canonical_name] = Section(
+            sections.append(Section(
                 canonical_name=canonical_name,
-                heading_title=heading_block.text,
+                heading_title=heading_title,
                 start_page=heading_block.page,
                 start_y0=heading_block.bbox[1],
                 blocks=section_blocks,
                 overlap_blocks=overlap,
-            )
+            ))
 
         return sections
 
@@ -520,19 +555,52 @@ class BaseAgyReviewer:
 
     def evaluate(self, section_text: str, context_text: Optional[str] = None) -> List[ReviewComment]:
         """
-        Ejecuta la revisión invocando antigravity-cli (`agy`). Si no se encuentra instalado
-        o falla la llamada CLI, ejecuta el motor de auditoría heurística como fallback seguro.
+        Ejecuta la revisión invocando antigravity-cli (`agy`). Si la sección es extensa,
+        la divide en lotes de bloques (máximo ~50 bloques o ~15,000 caracteres por lote)
+        para permitir que el modelo analice con rigurosidad y sin perder detalles.
         """
+        if not section_text or not section_text.strip():
+            return []
+
         if self.agy_client.is_installed:
             try:
-                logger.info("[%s] Invocando antigravity-cli ('agy')...", self.reviewer_name)
-                return self.agy_client.query_json_comments(
-                    system_prompt=self.system_prompt,
-                    reviewer_name=self.reviewer_name,
-                    category=self.category,
-                    audited_text=section_text,
-                    context_text=context_text
-                )
+                # Partir en bloques [P{n}-B{m}] si excede el tamaño razonable
+                lines = section_text.splitlines()
+                chunks: List[str] = []
+                current_chunk: List[str] = []
+                current_chars = 0
+
+                for line in lines:
+                    current_chunk.append(line)
+                    current_chars += len(line) + 1
+                    # Corte cada ~40 bloques o ~12,000 caracteres
+                    if len(current_chunk) >= 40 or current_chars >= 12000:
+                        chunks.append("\n".join(current_chunk))
+                        current_chunk = []
+                        current_chars = 0
+                if current_chunk:
+                    chunks.append("\n".join(current_chunk))
+
+                all_results: List[ReviewComment] = []
+                for idx, chunk in enumerate(chunks):
+                    chunk_ctx = context_text
+                    if len(chunks) > 1:
+                        logger.info(
+                            "[%s] Invocando agy para lote %d/%d (%d líneas)...",
+                            self.reviewer_name, idx + 1, len(chunks), len(chunk.splitlines())
+                        )
+                    else:
+                        logger.info("[%s] Invocando antigravity-cli ('agy')...", self.reviewer_name)
+
+                    res = self.agy_client.query_json_comments(
+                        system_prompt=self.system_prompt,
+                        reviewer_name=self.reviewer_name,
+                        category=self.category,
+                        audited_text=chunk,
+                        context_text=chunk_ctx
+                    )
+                    all_results.extend(res)
+                return all_results
             except Exception as err:
                 logger.warning("[%s] Falla en llamada a agy (%s). Usando motor heurístico local.", self.reviewer_name, err)
 
@@ -901,31 +969,49 @@ class ThesisReviewPipeline:
         # 1. Extracción Estructurada
         labeled_text, metadata_index, blocks = self.extractor.extract(input_pdf)
 
-        # 2. Segmentación Semántica Híbrida
+        # 2. Segmentación Semántica Híbrida (Capítulos Reales)
         sections = self.splitter.split(blocks)
+        logger.info("Capítulos detectados en el documento: %d", len(sections))
 
         all_comments: List[ReviewComment] = []
 
-        # 3. Auditoría por Agentes con antigravity-cli y Paso Progresivo de Contexto
-        obj_sec = sections.get("Planteamiento/Objetivos")
-        if obj_sec:
-            logger.info("Ejecutando Agente 1 (Coherencia y Objetivos) via agy...")
-            all_comments.extend(self.coherence_agent.evaluate(obj_sec.full_text))
+        # Identificar secciones clave para paso contextual
+        obj_sections = [s for s in sections if s.canonical_name == "Planteamiento/Objetivos"]
+        meth_sections = [s for s in sections if s.canonical_name == "Metodología"]
+        res_sections = [s for s in sections if s.canonical_name == "Resultados/Discusión"]
 
-        meth_sec = sections.get("Metodología")
-        if meth_sec:
-            logger.info("Ejecutando Agente 2 (Rigor Metodológico y Diseño) via agy...")
-            ctx_objs = obj_sec.full_text if obj_sec else ""
-            all_comments.extend(self.methodology_agent.evaluate(meth_sec.context_text, context_text=ctx_objs))
+        # Resumen de contexto de objetivos para los agentes posteriores
+        ctx_objs = "\n".join(s.full_text for s in obj_sections)
+        # Resumen de metodología para el agente de resultados
+        ctx_meth_summary = "\n".join(
+            f"[{s.heading_title}]\n" + "\n".join(f"[{b.target_id}] {b.text}" for b in s.blocks[:8])
+            for s in meth_sections
+        )
+        ctx_acumulado = f"{ctx_objs}\n{ctx_meth_summary}"
 
-        res_sec = sections.get("Resultados/Discusión")
-        if res_sec:
-            logger.info("Ejecutando Agente 3 (Validación de Resultados) via agy...")
-            ctx_acumulado = f"{obj_sec.full_text if obj_sec else ''}\n{meth_sec.full_text if meth_sec else ''}"
-            all_comments.extend(self.results_agent.evaluate(res_sec.context_text, context_text=ctx_acumulado))
+        # 3. Auditoría por Agentes con antigravity-cli
+        # Agente 1: Coherencia y Objetivos (Capítulos de Planteamiento/Objetivos e Introducción)
+        logger.info(">>> Ejecutando Agente 1 (Coherencia y Objetivos) en capítulos pertinentes...")
+        for sec in obj_sections:
+            logger.info("Auditoría de Objetivos sobre: %s", sec.heading_title)
+            all_comments.extend(self.coherence_agent.evaluate(sec.full_text))
 
-        logger.info("Ejecutando Agente 4 (Formalismo Técnico y Estilo) via agy...")
-        for sec in sections.values():
+        # Agente 2: Rigor Metodológico y Diseño (Capítulos técnicos, desarrollo, modelos, simulación)
+        logger.info(">>> Ejecutando Agente 2 (Rigor Metodológico y Diseño) en capítulos técnicos...")
+        for sec in meth_sections:
+            logger.info("Auditoría Metodológica sobre: %s", sec.heading_title)
+            all_comments.extend(self.methodology_agent.evaluate(sec.context_text, context_text=ctx_objs))
+
+        # Agente 3: Validación de Resultados y Conclusiones
+        logger.info(">>> Ejecutando Agente 3 (Validación de Resultados) en capítulos de pruebas y conclusiones...")
+        for sec in res_sections:
+            logger.info("Auditoría de Resultados sobre: %s", sec.heading_title)
+            all_comments.extend(self.results_agent.evaluate(sec.context_text, context_text=ctx_acumulado))
+
+        # Agente 4: Formalismo Técnico y Estilo (sobre todos los capítulos)
+        logger.info(">>> Ejecutando Agente 4 (Formalismo Técnico y Estilo) en todos los capítulos...")
+        for sec in sections:
+            logger.info("Auditoría de Estilo sobre: %s", sec.heading_title)
             all_comments.extend(self.style_agent.evaluate(sec.full_text))
 
         logger.info("Auditoría finalizada. Total de observaciones detectadas: %d", len(all_comments))
