@@ -70,13 +70,12 @@ class QuironGUI:
         
         self.stop_event = threading.Event()
         self.input_file = ctk.StringVar()
-        self.report_file = ctk.StringVar()
         self.guide_file = ctk.StringVar()
         self.agents_var = ctk.IntVar(value=10)
         self.overwrite_var = ctk.BooleanVar(value=False)
         self.do_spelling_var = ctk.BooleanVar(value=True)
-        self.do_dictamen_var = ctk.BooleanVar(value=True)
-        self.do_guide_var = ctk.BooleanVar(value=True)
+        self.do_methodology_var = ctk.BooleanVar(value=True)
+        self.do_guide_var = ctk.BooleanVar(value=False)
         self.mode_var = ctk.StringVar(value="cli") # 'cli' o 'api'
         self.agent_var = ctk.StringVar(value="Antigravity")
         
@@ -161,23 +160,17 @@ class QuironGUI:
         file_title = ctk.CTkLabel(file_frame, text="1. Selección de Archivos", font=ctk.CTkFont(size=14, weight="bold"))
         file_title.grid(row=0, column=0, columnspan=3, sticky=tk.W, padx=10, pady=(10, 5))
         
-        ctk.CTkLabel(file_frame, text="Memoria (PDF):").grid(row=1, column=0, sticky=tk.W, padx=10, pady=5)
+        ctk.CTkLabel(file_frame, text="Memoria / Tesis (PDF):").grid(row=1, column=0, sticky=tk.W, padx=10, pady=5)
         self.file_entry = ctk.CTkEntry(file_frame, textvariable=self.input_file, state='readonly')
         self.file_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=5)
         
         ctk.CTkButton(file_frame, text="Buscar PDF...", command=self.browse_file, width=120).grid(row=1, column=2, padx=10, pady=5)
-        
-        ctk.CTkLabel(file_frame, text="Dictamen Académico:").grid(row=2, column=0, sticky=tk.W, padx=10, pady=5)
-        self.report_entry = ctk.CTkEntry(file_frame, textvariable=self.report_file, state='readonly')
-        self.report_entry.grid(row=2, column=1, sticky="ew", padx=5, pady=5)
-        
-        ctk.CTkButton(file_frame, text="Buscar Destino...", command=self.browse_report, width=120).grid(row=2, column=2, padx=10, pady=5)
 
-        ctk.CTkLabel(file_frame, text="Guía / Manual (PDF):").grid(row=3, column=0, sticky=tk.W, padx=10, pady=(5, 10))
+        ctk.CTkLabel(file_frame, text="Guía / Manual (PDF):").grid(row=2, column=0, sticky=tk.W, padx=10, pady=(5, 10))
         self.guide_entry = ctk.CTkEntry(file_frame, textvariable=self.guide_file, state='readonly')
-        self.guide_entry.grid(row=3, column=1, sticky="ew", padx=5, pady=(5, 10))
+        self.guide_entry.grid(row=2, column=1, sticky="ew", padx=5, pady=(5, 10))
         
-        ctk.CTkButton(file_frame, text="Buscar Guía...", command=self.browse_guide, width=120).grid(row=3, column=2, padx=10, pady=(5, 10))
+        ctk.CTkButton(file_frame, text="Buscar Guía...", command=self.browse_guide, width=120).grid(row=2, column=2, padx=10, pady=(5, 10))
         
         # --- Sección 2: Opciones de Corrección ---
         options_frame = ctk.CTkFrame(main_frame)
@@ -190,8 +183,8 @@ class QuironGUI:
         ctk.CTkLabel(options_frame, text="Tareas:").grid(row=1, column=0, sticky=tk.W, padx=10, pady=5)
         tasks_frame = ctk.CTkFrame(options_frame, fg_color="transparent")
         tasks_frame.grid(row=1, column=1, sticky=tk.W, pady=5)
-        ctk.CTkCheckBox(tasks_frame, text="Ortografía", variable=self.do_spelling_var).pack(side=tk.LEFT, padx=(0, 10))
-        ctk.CTkCheckBox(tasks_frame, text="Dictamen", variable=self.do_dictamen_var).pack(side=tk.LEFT, padx=(0, 10))
+        ctk.CTkCheckBox(tasks_frame, text="Ortografía", variable=self.do_spelling_var).pack(side=tk.LEFT, padx=(0, 15))
+        ctk.CTkCheckBox(tasks_frame, text="Metodología (Sinodales)", variable=self.do_methodology_var).pack(side=tk.LEFT, padx=(0, 15))
         ctk.CTkCheckBox(tasks_frame, text="Verif. Guía", variable=self.do_guide_var).pack(side=tk.LEFT, padx=(0, 10))
         
         # Agentes y Modo
@@ -301,15 +294,6 @@ class QuironGUI:
         if file_path:
             self.input_file.set(file_path)
 
-    def browse_report(self):
-        file_path = filedialog.asksaveasfilename(
-            title="Guardar Dictamen Académico",
-            defaultextension=".txt",
-            filetypes=[("Archivos de Texto", "*.txt")]
-        )
-        if file_path:
-            self.report_file.set(file_path)
-
     def browse_guide(self):
         file_path = filedialog.askopenfilename(
             title="Seleccionar Guía o Manual (PDF)",
@@ -327,19 +311,21 @@ class QuironGUI:
     def open_prompts_editor(self):
         editor = ctk.CTkToplevel(self.root)
         editor.title("Editar Perfiles (Prompts)")
-        editor.geometry("750x700")
+        editor.geometry("750x600")
         editor.attributes("-topmost", True)
         
         try:
             from corrector import load_prompts
             prompts = load_prompts()
-            if len(prompts) == 3:
-                system_personality, dictamen_prompt, guide_prompt = prompts
+            if len(prompts) == 2:
+                system_personality, guide_prompt = prompts
+            elif len(prompts) == 3:
+                system_personality, _, guide_prompt = prompts
             else:
-                system_personality, dictamen_prompt = prompts
+                system_personality = prompts[0]
                 guide_prompt = ""
         except ImportError:
-            system_personality, dictamen_prompt, guide_prompt = "", "", ""
+            system_personality, guide_prompt = "", ""
             
         main_frame = ctk.CTkFrame(editor)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
@@ -382,22 +368,9 @@ class QuironGUI:
         ctk.CTkButton(buttons_1, text="Cargar TXT", width=100, command=lambda: load_txt_to_widget(system_text)).pack(side=tk.LEFT, padx=(0,5))
         ctk.CTkButton(buttons_1, text="Guardar TXT", width=100, command=lambda: save_widget_to_txt(system_text)).pack(side=tk.LEFT)
         
-        system_text = ctk.CTkTextbox(main_frame, height=120, wrap=tk.WORD, font=("Consolas", 12))
+        system_text = ctk.CTkTextbox(main_frame, height=180, wrap=tk.WORD, font=("Consolas", 12))
         system_text.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
         system_text.insert(tk.END, system_personality)
-        
-        # Dictamen Prompt
-        header_frame_2 = ctk.CTkFrame(main_frame, fg_color="transparent")
-        header_frame_2.pack(fill=tk.X, pady=(0,5))
-        ctk.CTkLabel(header_frame_2, text="Prompt del Dictamen Académico:", font=ctk.CTkFont(weight="bold")).pack(side=tk.LEFT)
-        buttons_2 = ctk.CTkFrame(header_frame_2, fg_color="transparent")
-        buttons_2.pack(side=tk.RIGHT)
-        ctk.CTkButton(buttons_2, text="Cargar TXT", width=100, command=lambda: load_txt_to_widget(dictamen_text)).pack(side=tk.LEFT, padx=(0,5))
-        ctk.CTkButton(buttons_2, text="Guardar TXT", width=100, command=lambda: save_widget_to_txt(dictamen_text)).pack(side=tk.LEFT)
-        
-        dictamen_text = ctk.CTkTextbox(main_frame, height=120, wrap=tk.WORD, font=("Consolas", 12))
-        dictamen_text.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
-        dictamen_text.insert(tk.END, dictamen_prompt)
         
         # Guide Prompt
         header_frame_3 = ctk.CTkFrame(main_frame, fg_color="transparent")
@@ -408,18 +381,16 @@ class QuironGUI:
         ctk.CTkButton(buttons_3, text="Cargar TXT", width=100, command=lambda: load_txt_to_widget(guide_text)).pack(side=tk.LEFT, padx=(0,5))
         ctk.CTkButton(buttons_3, text="Guardar TXT", width=100, command=lambda: save_widget_to_txt(guide_text)).pack(side=tk.LEFT)
         
-        guide_text = ctk.CTkTextbox(main_frame, height=120, wrap=tk.WORD, font=("Consolas", 12))
+        guide_text = ctk.CTkTextbox(main_frame, height=180, wrap=tk.WORD, font=("Consolas", 12))
         guide_text.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
         guide_text.insert(tk.END, guide_prompt)
         
         def save_prompts():
             new_system = system_text.get("1.0", tk.END).strip()
-            new_dictamen = dictamen_text.get("1.0", tk.END).strip()
             new_guide = guide_text.get("1.0", tk.END).strip()
             
             prompts_data = {
                 "system_personality": new_system,
-                "dictamen_prompt": new_dictamen,
                 "guide_prompt": new_guide
             }
             
@@ -459,14 +430,14 @@ class QuironGUI:
                 self.progress_label.configure(text="0/0 páginas (0.0%)")
         self.root.after(0, _update)
 
-    def run_correction_thread(self, input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path, cli_model=""):
+    def run_correction_thread(self, input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, do_spelling, do_methodology, do_guide, guide_path, cli_model=""):
         try:
-            corregir_reporte_pdf(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path, cli_model=cli_model, stop_event=self.stop_event, progress_callback=self.update_gui_progress)
+            corregir_reporte_pdf(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, do_spelling=do_spelling, do_methodology=do_methodology, do_guide=do_guide, guide_path=guide_path, cli_model=cli_model, stop_event=self.stop_event, progress_callback=self.update_gui_progress)
             if self.stop_event.is_set():
                 self.msg_queue.put("\n>>> PROCESO DETENIDO POR EL USUARIO <<<\n")
             else:
                 self.msg_queue.put("\n>>> PROCESO FINALIZADO CON ÉXITO <<<\n")
-                messagebox.showinfo("Completado", "El reporte ha sido corregido exitosamente.")
+                messagebox.showinfo("Completado", "El reporte ha sido procesado exitosamente.")
             self.save_config()
         except Exception as e:
             self.msg_queue.put(f"\n[ERROR CRÍTICO] {e}\n")
@@ -544,13 +515,12 @@ class QuironGUI:
         self.msg_queue.put(f"Archivo entrada: {input_path}\n")
         self.msg_queue.put(f"Archivo salida: {output_path}\n")
         
-        report_path = self.report_file.get()
         guide_path = self.guide_file.get()
         do_spelling = self.do_spelling_var.get()
-        do_dictamen = self.do_dictamen_var.get()
+        do_methodology = self.do_methodology_var.get()
         do_guide = self.do_guide_var.get()
         
-        if not do_spelling and not do_dictamen and not do_guide:
+        if not do_spelling and not do_methodology and not do_guide:
             self.msg_queue.put("No se seleccionó ninguna tarea a realizar.\n")
             self.run_button.configure(state=tk.NORMAL)
             self.stop_button.configure(state=tk.DISABLED)
@@ -561,7 +531,7 @@ class QuironGUI:
             do_guide = False
             
         # Lanzar el hilo
-        thread = threading.Thread(target=self.run_correction_thread, args=(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, report_path, do_spelling, do_dictamen, do_guide, guide_path, cli_model))
+        thread = threading.Thread(target=self.run_correction_thread, args=(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, do_spelling, do_methodology, do_guide, guide_path, cli_model))
         thread.daemon = True
         thread.start()
 

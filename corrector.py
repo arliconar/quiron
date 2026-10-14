@@ -344,14 +344,6 @@ SYSTEM_PROMPT_JSON_INSTRUCTIONS = (
     "8. NUNCA reportes como error una palabra cuya única diferencia con la forma correcta sea la falta de 'fi', 'fl', 'ff', 'ffi' o 'ffl', ni palabras partidas por un espacio en ese punto. Son artefactos de extracción, NO errores del autor.\n"
 )
 
-DEFAULT_DICTAMEN_PROMPT = (
-    "Eres un Académico evaluando un documento (reporte, tesis, memoria, etc.). "
-    "Tu tarea es revisar rigurosamente el contenido técnico, la estructura, la coherencia y la profundidad del trabajo. "
-    "Crea un dictamen con correcciones y sugerencias acerca del contenido. "
-    "Para cada observación, incluye (si es posible): el capítulo, la hoja/página, el texto original al que haces referencia, y la mejora sugerida. "
-    "Tu respuesta debe estar en texto claro, estructurado y profesional."
-)
-
 DEFAULT_GUIDE_PROMPT = (
     "Eres un Verificador de Formato y Lineamientos Académicos. "
     "Tu tarea es comparar el texto de un documento (tesis/memoria) contra un manual o guía de lineamientos proporcionado. "
@@ -370,12 +362,11 @@ def load_prompts():
                 data = json.load(f)
                 return (
                     data.get("system_personality", DEFAULT_SYSTEM_PERSONALITY), 
-                    data.get("dictamen_prompt", DEFAULT_DICTAMEN_PROMPT),
                     data.get("guide_prompt", DEFAULT_GUIDE_PROMPT)
                 )
         except Exception:
             pass
-    return DEFAULT_SYSTEM_PERSONALITY, DEFAULT_DICTAMEN_PROMPT, DEFAULT_GUIDE_PROMPT
+    return DEFAULT_SYSTEM_PERSONALITY, DEFAULT_GUIDE_PROMPT
 
 def run_agent_cli(text_content: str, page_num: int, agent: str = "Antigravity", model: str = "") -> list:
     """
@@ -383,7 +374,7 @@ def run_agent_cli(text_content: str, page_num: int, agent: str = "Antigravity", 
     Devuelve la lista de errores encontrados.
     """
     try:
-        system_personality, _, _ = load_prompts()
+        system_personality, _ = load_prompts()
         system_prompt = f"{system_personality}\n\n{SYSTEM_PROMPT_JSON_INSTRUCTIONS}"
         text_file_path = os.path.abspath(f"temp_page_{page_num}.txt")
         
@@ -484,63 +475,12 @@ def run_agent_cli(text_content: str, page_num: int, agent: str = "Antigravity", 
         
     return []
 
-def run_content_review_cli(text_content: str, agent: str = "Antigravity", model: str = "") -> str:
-    """
-    Ejecuta el agente para una revisión de contenido técnico usando el dictamen,
-    leyendo y escribiendo en archivos para evitar problemas de longitud.
-    """
-    try:
-        _, dictamen_prompt, _ = load_prompts()
-        text_file_path = os.path.abspath("temp_revision_contenido.txt")
-        
-        with open(text_file_path, "w", encoding="utf-8") as f:
-            f.write(text_content)
-            
-        prompt = (
-            f"{dictamen_prompt}\n\n"
-            f"El documento completo se encuentra en el archivo: {text_file_path}\n"
-            "Lee ese archivo, realiza tu revisión y devuelve el reporte resultante como tu única respuesta."
-        )
-        
-        prompt_str = prompt.strip()
-        if agent == "GitHub CLI":
-            cmd = ["gh", "copilot", "explain", prompt_str]
-        elif agent == "Claude Code":
-            cmd = ["claude", "-p", prompt_str]
-        else:
-            cmd = ["agy", "--dangerously-skip-permissions", "-p", prompt_str]
-        
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="ignore"
-        )
-        
-        revision = result.stdout.strip()
-        if not revision:
-            print(f"  [ERROR] El agente no generó respuesta en stdout para revisión de contenido. Error: {result.stderr}", file=sys.stderr)
-                
-        # Limpiar archivos temporales
-        try:
-            if os.path.exists(text_file_path): os.remove(text_file_path)
-        except Exception as e:
-            print(f"  [AVISO] No se pudieron borrar archivos temporales: {e}", file=sys.stderr)
-            
-        return revision
-            
-    except Exception as e:
-        print(f"Ocurrió un error inesperado al invocar {agent} para revisión: {e}", file=sys.stderr)
-        
-    return ""
-
 def run_guide_review_cli(full_text: str, guide_text: str, agent: str = "Antigravity", model: str = "") -> str:
     """
     Ejecuta el agente para una verificación de guía usando el guide_prompt.
     """
     try:
-        _, _, guide_prompt = load_prompts()
+        _, guide_prompt = load_prompts()
         text_file_path = os.path.abspath("temp_verificacion_guia.txt")
         
         content_to_write = f"=== GUÍA / MANUAL ===\n{guide_text}\n\n=== DOCUMENTO A REVISAR ===\n{full_text}"
@@ -592,7 +532,7 @@ def run_agent_api(text_content: str, api_llm: str, api_model: str) -> list:
     """
     Ejecuta el agente utilizando llamadas directas a la API del proveedor seleccionado.
     """
-    system_personality, _, _ = load_prompts()
+    system_personality, _ = load_prompts()
     system_prompt = f"{system_personality}\n\n{SYSTEM_PROMPT_JSON_INSTRUCTIONS}"
     prompt = f"{system_prompt}\n\nEl texto a analizar es el siguiente:\n\n{text_content}"
     
@@ -707,93 +647,11 @@ def run_agent_api(text_content: str, api_llm: str, api_model: str) -> list:
         
     return []
 
-def run_content_review_api(text_content: str, api_llm: str, api_model: str) -> str:
-    """
-    Ejecuta el agente para revisión de contenido utilizando la API directa.
-    """
-    _, dictamen_prompt, _ = load_prompts()
-    prompt = f"{dictamen_prompt}\n\nEl documento completo es el siguiente:\n\n{text_content}"
-    
-    url = ""
-    headers = {}
-    payload = {}
-    
-    try:
-        if api_llm == "ChatGPT":
-            api_key = os.environ.get("OPENAI_API_KEY", "")
-            url = "https://api.openai.com/v1/chat/completions"
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            payload = {
-                "model": api_model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3
-            }
-        elif api_llm == "Gemini":
-            api_key = os.environ.get("GEMINI_API_KEY", "")
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{api_model}:generateContent?key={api_key}"
-            headers = {"Content-Type": "application/json"}
-            payload = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.3}
-            }
-        elif api_llm == "Claude":
-            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-            url = "https://api.anthropic.com/v1/messages"
-            headers = {
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json"
-            }
-            payload = {
-                "model": api_model,
-                "max_tokens": 4096,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3
-            }
-        elif api_llm == "Grok":
-            api_key = os.environ.get("XAI_API_KEY", "")
-            url = "https://api.x.ai/v1/chat/completions"
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            payload = {
-                "model": api_model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3
-            }
-        else:
-            return ""
-
-        max_retries = 10
-        base_delay = 5
-        for attempt in range(max_retries):
-            response = requests.post(url, headers=headers, json=payload)
-            if response.status_code in [429, 500, 502, 503, 504]:
-                delay = base_delay * (2 ** attempt) + random.uniform(1, 5)
-                print(f"  [AVISO] HTTP {response.status_code} por {api_llm}. Reintentando en {delay:.1f}s...", file=sys.stderr)
-                time.sleep(delay)
-                continue
-            response.raise_for_status()
-            break
-        else:
-            response.raise_for_status()
-        data = response.json()
-        
-        if api_llm in ["ChatGPT", "Grok"]:
-            return data["choices"][0]["message"]["content"].strip()
-        elif api_llm == "Gemini":
-            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-        elif api_llm == "Claude":
-            return data["content"][0]["text"].strip()
-            
-    except Exception as e:
-        print(f"Ocurrió un error al invocar {api_llm} para revisión: {e}", file=sys.stderr)
-        
-    return ""
-
 def run_guide_review_api(full_text: str, guide_text: str, api_llm: str, api_model: str) -> str:
     """
     Ejecuta el agente para verificación de guía utilizando la API directa.
     """
-    _, _, guide_prompt = load_prompts()
+    _, guide_prompt = load_prompts()
     prompt = f"{guide_prompt}\n\n=== GUÍA / MANUAL ===\n{guide_text}\n\n=== DOCUMENTO A REVISAR ===\n{full_text}"
     
     url = ""
@@ -1008,10 +866,10 @@ def crear_barra_progreso(actual: int, total: int, ancho: int = 20) -> str:
     barra = "█" * llenos + "░" * (ancho - llenos)
     return f"[{barra}] {actual}/{total} páginas ({porcentaje:.1f}%)"
 
-def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10, agent_name: str = "Antigravity", mode: str = "cli", api_llm: str = "", api_model: str = "", report_path: str = "", do_spelling: bool = True, do_dictamen: bool = True, do_guide: bool = False, guide_path: str = "", cli_model: str = "", stop_event=None, progress_callback=None):
+def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10, agent_name: str = "Antigravity", mode: str = "cli", api_llm: str = "", api_model: str = "", do_spelling: bool = True, do_methodology: bool = True, do_guide: bool = False, guide_path: str = "", cli_model: str = "", stop_event=None, progress_callback=None):
     """
-    Abre el PDF de entrada, analiza errores por página usando el CLI o API seleccionado,
-    agrega anotaciones al PDF copia y guarda el resultado.
+    Abre el PDF de entrada, analiza errores ortográficos y/o metodología de tesis,
+    agrega anotaciones al PDF y guarda el resultado.
     """
     if not os.path.exists(input_path):
         print(f"Error: El archivo de entrada '{input_path}' no existe.", file=sys.stderr)
@@ -1088,7 +946,7 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
             print("Proceso detenido por el usuario.")
             return
 
-        print("\n--- Aplicando anotaciones al PDF ---")
+        print("\n--- Aplicando anotaciones de ortografía al PDF ---")
         for page_num in range(total_paginas):
             page = doc[page_num]
             errors = page_errors.get(page_num, [])
@@ -1133,32 +991,38 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
                     highlight.update()
                     total_anotaciones_creadas += 1
 
-    txt_output_path = ""
-    if do_dictamen:
+    # Guardar estado actual del documento antes de la revisión metodológica
+    temp_intermediate_path = output_path + ".spelling_tmp.pdf"
+    doc.save(temp_intermediate_path)
+    doc.close()
+
+    if do_methodology:
         if stop_event and stop_event.is_set():
+            if os.path.exists(temp_intermediate_path):
+                os.remove(temp_intermediate_path)
             return
-        # --- REVISIÓN DE CONTENIDO (DICTAMEN ACADÉMICO) ---
-        agent_display = f"{api_llm} ({api_model})" if mode == "api" else (f"{agent_name} ({cli_model})" if cli_model else agent_name)
-        print(f"\n--- Iniciando revisión de contenido global usando {agent_display} ---")
-        
-        print("Enviando el documento completo para revisión de contenido (esto puede tardar unos momentos)...")
-        if mode == "api":
-            revision_contenido = run_content_review_api(full_text, api_llm, api_model)
-        else:
-            revision_contenido = run_content_review_cli(full_text, agent_name, cli_model)
-        
-        if revision_contenido:
-            if report_path:
-                txt_output_path = report_path
-            else:
-                base, _ = os.path.splitext(input_path)
-                txt_output_path = f"{base}_revision_contenido.txt"
-                
-            with open(txt_output_path, "w", encoding="utf-8") as f:
-                f.write(revision_contenido)
-            print(f"Revisión de contenido guardada exitosamente en: {txt_output_path}")
-        else:
-            print("No se pudo obtener la revisión de contenido.")
+        # --- REVISIÓN DE METODOLOGÍA (THESIS REVIEWER / 4 SINODALES) ---
+        print("\n==================================================")
+        print("INICIANDO REVISIÓN DE METODOLOGÍA Y ESTRUCTURA (4 SINODALES)")
+        print("==================================================")
+        try:
+            from thesis_reviewer import ThesisReviewPipeline
+            pipeline = ThesisReviewPipeline(agy_command="agy")
+            temp_meth_output = output_path + ".meth_tmp.pdf"
+            
+            # Ejecutar auditoría sobre el PDF con anotaciones previas
+            pipeline.run(input_pdf=temp_intermediate_path, output_pdf=temp_meth_output)
+            
+            # Reemplazar el archivo intermedio por el que tiene las anotaciones metodológicas
+            if os.path.exists(temp_intermediate_path):
+                os.remove(temp_intermediate_path)
+            temp_intermediate_path = temp_meth_output
+            print("✓ Revisión de metodología y anotaciones de sinodales aplicadas exitosamente.")
+        except Exception as e:
+            print(f"  [ERROR] Falló la revisión de metodología: {e}", file=sys.stderr)
+
+    # Reabrir el doc resultante si aún requerimos tareas posteriores o guardado final
+    doc = pymupdf.open(temp_intermediate_path)
 
     if do_guide and guide_path and os.path.exists(guide_path):
         if stop_event and stop_event.is_set():
@@ -1200,24 +1064,29 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
         doc.save(output_path)
         doc.close()
     
+    # Limpiar archivo temporal intermedio si aún existiera
+    if os.path.exists(temp_intermediate_path) and os.path.abspath(temp_intermediate_path) != os.path.abspath(output_path):
+        try:
+            os.remove(temp_intermediate_path)
+        except Exception:
+            pass
+
     print("\n==================================================")
     print("PROCESO TERMINADO EXITOSAMENTE")
     print(f"Archivo original: {input_path}")
     print(f"Copia comentada:  {output_path}")
-    if txt_output_path:
-        print(f"Revisión de contenido: {txt_output_path}")
-    print(f"Errores detectados: {total_errores_detectados}")
+    print(f"Errores ortográficos detectados: {total_errores_detectados}")
     print(f"Anotaciones agregadas en PDF: {total_anotaciones_creadas}")
     print("==================================================")
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Corrige errores ortográficos y gramaticales en reportes PDF usando antigravity-cli y crea un PDF copia anotado."
+        description="Corrige errores ortográficos y audita metodología en reportes/tesis PDF usando antigravity-cli."
     )
     parser.add_argument(
         "-i", "--input",
         required=True,
-        help="Ruta al archivo PDF original (reporte de estadía)."
+        help="Ruta al archivo PDF original (reporte de estadía o tesis)."
     )
     parser.add_argument(
         "-o", "--output",
@@ -1227,11 +1096,7 @@ def main():
         "-a", "--agents",
         type=int,
         default=10,
-        help="Número de hilos a ejecutar en paralelo. Por defecto es 10."
-    )
-    parser.add_argument(
-        "-r", "--report-output",
-        help="Ruta donde se guardará el reporte de revisión de contenido (txt). Opcional."
+        help="Número de hilos a ejecutar en paralelo para ortografía. Por defecto es 10."
     )
     parser.add_argument(
         "-g", "--guide",
@@ -1254,9 +1119,9 @@ def main():
         help="Omite la corrección ortográfica."
     )
     parser.add_argument(
-        "--skip-dictamen",
+        "--skip-methodology",
         action="store_true",
-        help="Omite la generación del dictamen académico."
+        help="Omite la revisión de metodología y sinodales."
     )
     
     args = parser.parse_args()
@@ -1269,15 +1134,11 @@ def main():
         # Sobrescribir el archivo original
         output_path = input_path
         
-    report_output_path = ""
-    if args.report_output:
-        report_output_path = os.path.abspath(args.report_output)
-        
     guide_path = ""
     if args.guide:
         guide_path = os.path.abspath(args.guide)
         
-    corregir_reporte_pdf(input_path, output_path, args.agents, args.agent_cli, report_path=report_output_path, do_spelling=not args.skip_spelling, do_dictamen=not args.skip_dictamen, do_guide=bool(guide_path), guide_path=guide_path, cli_model=args.model)
+    corregir_reporte_pdf(input_path, output_path, args.agents, args.agent_cli, do_spelling=not args.skip_spelling, do_methodology=not args.skip_methodology, do_guide=bool(guide_path), guide_path=guide_path, cli_model=args.model)
 
 if __name__ == "__main__":
     main()
