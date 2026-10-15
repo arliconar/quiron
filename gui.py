@@ -20,9 +20,9 @@ MODELS_JSON = {
     "Gemini": [
         "gemini-2.5-flash",
         "gemini-2.5-pro",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro"
+        "gemini-2.5-flash-lite",
+        "gemini-flash-latest",
+        "gemini-pro-latest"
     ],
     "ChatGPT": [
         "gpt-4o-mini",
@@ -78,6 +78,7 @@ class QuironGUI:
         self.do_guide_var = ctk.BooleanVar(value=False)
         self.mode_var = ctk.StringVar(value="cli") # 'cli' o 'api'
         self.agent_var = ctk.StringVar(value="Antigravity")
+        self.cli_model_var = ctk.StringVar(value="gemini-3.8-flash-low")
         
         self.api_llm_var = ctk.StringVar(value="ChatGPT")
         self.api_model_var = ctk.StringVar(value="gpt-4o-mini")
@@ -116,6 +117,7 @@ class QuironGUI:
         self.config_data["last_llm"] = llm
         self.config_data["last_model"] = self.api_model_var.get()
         self.config_data["last_agent"] = self.agent_var.get()
+        self.config_data["cli_model"] = self.cli_model_var.get()
         self.config_data["mode"] = self.mode_var.get()
         
         try:
@@ -129,6 +131,8 @@ class QuironGUI:
             self.mode_var.set(self.config_data["mode"])
         if "last_agent" in self.config_data:
             self.agent_var.set(self.config_data["last_agent"])
+        if "cli_model" in self.config_data:
+            self.cli_model_var.set(self.config_data["cli_model"])
         if "last_llm" in self.config_data:
             self.api_llm_var.set(self.config_data["last_llm"])
         if "last_model" in self.config_data:
@@ -209,6 +213,23 @@ class QuironGUI:
         ctk.CTkLabel(self.cli_frame, text="Agente CLI:").grid(row=0, column=0, sticky=tk.W, pady=5)
         self.agent_combo = ctk.CTkComboBox(self.cli_frame, variable=self.agent_var, values=["Antigravity", "GitHub CLI", "Claude Code"], state='readonly', width=180)
         self.agent_combo.grid(row=0, column=1, sticky=tk.W, padx=10)
+        
+        ctk.CTkLabel(self.cli_frame, text="Modelo CLI:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.cli_model_combo = ctk.CTkComboBox(
+            self.cli_frame,
+            variable=self.cli_model_var,
+            values=[
+                "gemini-3.8-flash-low",
+                "gemini-3.8-flash-medium",
+                "gemini-3.8-flash-high",
+                "claude-sonnet-5-5-low",
+                "claude-opus-5-5-low",
+                "gpt-oss-120b-medium"
+            ],
+            state='normal',
+            width=220
+        )
+        self.cli_model_combo.grid(row=1, column=1, sticky=tk.W, padx=10)
         
         # API Frame
         self.api_frame = ctk.CTkFrame(options_frame, fg_color="transparent")
@@ -488,7 +509,7 @@ class QuironGUI:
                 os.environ["XAI_API_KEY"] = api_key
         else:
             agent_name = self.agent_var.get()
-            cli_model = ""
+            cli_model = self.cli_model_var.get()
             
         self.save_config()
             

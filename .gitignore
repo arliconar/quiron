@@ -3,6 +3,12 @@
 !requirements.txt
 *.json
 
+# Python cache
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+
 # PyInstaller / Build
 build/
 dist/

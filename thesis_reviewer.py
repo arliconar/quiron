@@ -167,9 +167,10 @@ class AgyClient:
     la respuesta estructurada en formato JSON hacia instancias de ReviewComment.
     """
 
-    def __init__(self, cli_command: str = "agy", timeout_seconds: int = 120):
+    def __init__(self, cli_command: str = "agy", timeout_seconds: int = 120, model: str = ""):
         self.cli_command = cli_command
         self.timeout_seconds = timeout_seconds
+        self.model = model
         self.is_installed = self._check_installation()
 
     def _check_installation(self) -> bool:
@@ -209,7 +210,10 @@ class AgyClient:
                 f"Sigue todas las instrucciones y reglas descritas en dicho archivo y genera tu respuesta."
             )
 
-        cmd = [self.cli_command, "--dangerously-skip-permissions", "-p", prompt_arg]
+        cmd = [self.cli_command, "--dangerously-skip-permissions"]
+        if self.model:
+            cmd.extend(["--model", self.model])
+        cmd.extend(["-p", prompt_arg])
         logger.debug("Invocando antigravity-cli: %s", " ".join(cmd[:2]))
 
         try:
@@ -1106,8 +1110,8 @@ class ThesisReviewPipeline:
     Extracción -> Segmentación Semántica -> Agentes antigravity-cli (`agy`) -> Anotación Visual
     """
 
-    def __init__(self, agy_command: str = "agy"):
-        self.agy_client = AgyClient(cli_command=agy_command)
+    def __init__(self, agy_command: str = "agy", model: str = ""):
+        self.agy_client = AgyClient(cli_command=agy_command, model=model)
         self.extractor = PdfStructuredExtractor()
         self.splitter = SectionSplitter()
         self.coherence_agent = CoherenceReviewer(agy_client=self.agy_client)

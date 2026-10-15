@@ -10,6 +10,30 @@ import requests
 import time
 import random
 import unicodedata
+import threading
+
+class GeminiRateLimiter:
+    """
+    Controlador de tasa de peticiones concurrente (Thread-safe Rate Limiter)
+    para la API de Gemini (Free Tier / Quota limit).
+    Por defecto limita a 10 peticiones por minuto (mínimo 6.0 segundos entre llamadas).
+    """
+    def __init__(self, requests_per_minute: float = 10.0):
+        self.interval = 60.0 / max(1.0, requests_per_minute)
+        self.lock = threading.Lock()
+        self.last_call_time = 0.0
+
+    def wait(self):
+        with self.lock:
+            now = time.time()
+            elapsed = now - self.last_call_time
+            if elapsed < self.interval:
+                sleep_time = self.interval - elapsed
+                time.sleep(sleep_time)
+            self.last_call_time = time.time()
+
+# Instancia global compartida para todas las llamadas API a Gemini
+gemini_rate_limiter = GeminiRateLimiter(requests_per_minute=10.0)
 
 try:
     import pdfplumber
@@ -394,7 +418,10 @@ def run_agent_cli(text_content: str, page_num: int, agent: str = "Antigravity", 
         elif agent == "Claude Code":
             cmd = ["claude", "-p", prompt_str]
         else: # Antigravity por defecto
-            cmd = ["agy", "--dangerously-skip-permissions", "-p", prompt_str]
+            cmd = ["agy", "--dangerously-skip-permissions"]
+            if model:
+                cmd.extend(["--model", model])
+            cmd.extend(["-p", prompt_str])
         
         max_retries = 5
         base_delay = 3
@@ -587,9 +614,15 @@ def run_agent_api(text_content: str, api_llm: str, api_model: str) -> list:
         max_retries = 10
         base_delay = 5
         for attempt in range(max_retries):
+            if api_llm == "Gemini":
+                gemini_rate_limiter.wait()
             response = requests.post(url, headers=headers, json=payload)
             if response.status_code in [429, 500, 502, 503, 504]:
-                delay = base_delay * (2 ** attempt) + random.uniform(1, 5)
+                retry_after = response.headers.get("Retry-After")
+                if retry_after and retry_after.isdigit():
+                    delay = float(retry_after) + random.uniform(1, 3)
+                else:
+                    delay = base_delay * (2 ** attempt) + random.uniform(1, 5)
                 print(f"  [AVISO] HTTP {response.status_code} por {api_llm}. Reintentando en {delay:.1f}s...", file=sys.stderr)
                 time.sleep(delay)
                 continue
@@ -705,9 +738,15 @@ def run_guide_review_api(full_text: str, guide_text: str, api_llm: str, api_mode
         max_retries = 10
         base_delay = 5
         for attempt in range(max_retries):
+            if api_llm == "Gemini":
+                gemini_rate_limiter.wait()
             response = requests.post(url, headers=headers, json=payload)
             if response.status_code in [429, 500, 502, 503, 504]:
-                delay = base_delay * (2 ** attempt) + random.uniform(1, 5)
+                retry_after = response.headers.get("Retry-After")
+                if retry_after and retry_after.isdigit():
+                    delay = float(retry_after) + random.uniform(1, 3)
+                else:
+                    delay = base_delay * (2 ** attempt) + random.uniform(1, 5)
                 print(f"  [AVISO] HTTP {response.status_code} por {api_llm}. Reintentando en {delay:.1f}s...", file=sys.stderr)
                 time.sleep(delay)
                 continue
@@ -900,45 +939,97 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
     full_text = "\n\n".join(all_pages_text)
     
     if do_spelling:
-        # Diccionario para guardar los errores detectados por página
-        page_errors = {}
-        paginas_procesadas = 0
-        
-        def procesar_pagina(page_index: int):
-            if stop_event and stop_event.is_set():
-                return page_index, []
-            page_text = all_pages_text_list[page_index] if page_index < len(all_pages_text_list) else ""
-            if not page_text:
-                return page_index, []
-            print(f"Lanzando revisión de Página {page_index + 1} de {total_paginas}...")
-            if mode == "api":
-                errs = run_agent_api(page_text, api_llm, api_model)
+        # Agrupar páginas en lotes (chunks) para reducir llamadas al LLM hasta un 80%
+        # Lotes de hasta 4 páginas o 12,000 caracteres
+        PAGE_BATCH_SIZE = 4
+        batches = []
+        current_batch = []
+        current_chars = 0
+        for p_idx in range(total_paginas):
+            p_txt = all_pages_text_list[p_idx] if p_idx < len(all_pages_text_list) else ""
+            if not p_txt.strip():
+                continue
+            if len(current_batch) >= PAGE_BATCH_SIZE or (current_chars + len(p_txt) > 12000 and current_batch):
+                batches.append(current_batch)
+                current_batch = [p_idx]
+                current_chars = len(p_txt)
             else:
-                errs = run_agent_cli(page_text, page_index + 1, agent_name, cli_model)
-            errs, descartados = filtrar_falsos_positivos_ligadura(errs)
-            if descartados:
-                print(f"  [Pág {page_index + 1}] {descartados} falso(s) positivo(s) por ligadura descartado(s).")
-            return page_index, errs
+                current_batch.append(p_idx)
+                current_chars += len(p_txt)
+        if current_batch:
+            batches.append(current_batch)
 
-        print(f"\n--- Analizando ortografía en paralelo ({num_agents} instancias) ---")
+        total_batches = len(batches)
+        print(f"\n--- Analizando ortografía optimizada: {total_paginas} páginas agrupadas en {total_batches} lotes ({num_agents} hilos) ---")
+
+        def procesar_lote(batch_indices: list):
+            if stop_event and stop_event.is_set():
+                return batch_indices, {}
+            # Construir texto del lote con delimitadores claros
+            chunk_sections = []
+            for b_idx in batch_indices:
+                t = all_pages_text_list[b_idx]
+                chunk_sections.append(f"=== PÁGINA {b_idx + 1} ===\n{t}")
+            chunk_text = "\n\n".join(chunk_sections)
+
+            lbl_pages = f"{batch_indices[0] + 1}-{batch_indices[-1] + 1}" if len(batch_indices) > 1 else f"{batch_indices[0] + 1}"
+            print(f"Lanzando revisión de Lote [Págs {lbl_pages}] ({len(batch_indices)} págs)...")
+
+            if mode == "api":
+                raw_errs = run_agent_api(chunk_text, api_llm, api_model)
+            else:
+                raw_errs = run_agent_cli(chunk_text, batch_indices[0] + 1, agent_name, cli_model)
+
+            raw_errs, _ = filtrar_falsos_positivos_ligadura(raw_errs)
+
+            # Distribuir los errores a la página que efectivamente contiene la frase original
+            results_by_page = {idx: [] for idx in batch_indices}
+            for err in raw_errs:
+                orig = err.get("original", "").strip()
+                if not orig:
+                    continue
+                orig_lower = orig.lower()
+                matched = False
+                for b_idx in batch_indices:
+                    ptxt = all_pages_text_list[b_idx].lower()
+                    if orig_lower in ptxt:
+                        err_copy = dict(err)
+                        err_copy["pagina"] = b_idx + 1
+                        results_by_page[b_idx].append(err_copy)
+                        matched = True
+                        break
+                if not matched and batch_indices:
+                    # Fallback a la primera página del lote
+                    err_copy = dict(err)
+                    err_copy["pagina"] = batch_indices[0] + 1
+                    results_by_page[batch_indices[0]].append(err_copy)
+
+            return batch_indices, results_by_page
+
+        batches_procesados = 0
         with concurrent.futures.ThreadPoolExecutor(max_workers=num_agents) as executor:
-            futures = {executor.submit(procesar_pagina, i): i for i in range(total_paginas)}
+            futures = {executor.submit(procesar_lote, b): b for b in batches}
             for future in concurrent.futures.as_completed(futures):
                 if stop_event and stop_event.is_set():
                     executor.shutdown(wait=False, cancel_futures=True)
                     break
                 try:
-                    page_index, errs = future.result()
-                    page_errors[page_index] = errs
-                    paginas_procesadas += 1
+                    b_indices, res_map = future.result()
+                    for b_idx, err_list in res_map.items():
+                        page_errors[b_idx] = err_list
+                    batches_procesados += 1
+                    paginas_procesadas = sum(len(b) for b in batches[:batches_procesados])
                     barra_txt = crear_barra_progreso(paginas_procesadas, total_paginas)
-                    print(f"✓ {barra_txt} | Página {page_index + 1} completada ({len(errs)} errores).")
+                    tot_errs_batch = sum(len(el) for el in res_map.values())
+                    lbl_pages = f"{b_indices[0] + 1}-{b_indices[-1] + 1}" if len(b_indices) > 1 else f"{b_indices[0] + 1}"
+                    print(f"✓ {barra_txt} | Lote [Págs {lbl_pages}] completado ({tot_errs_batch} errores).")
                     if progress_callback:
                         progress_callback(paginas_procesadas, total_paginas)
                 except Exception as exc:
-                    paginas_procesadas += 1
-                    barra_txt = crear_barra_progreso(paginas_procesadas, total_paginas)
-                    print(f"✗ {barra_txt} | La página generó una excepción: {exc}", file=sys.stderr)
+                    batches_procesados += 1
+                    paginas_procesadas = sum(len(b) for b in batches[:batches_procesados])
+                    barra_txt = crear_barra_progreso(paginas_progreso if (paginas_progreso := paginas_procesadas) <= total_paginas else total_paginas, total_paginas)
+                    print(f"✗ {barra_txt} | El lote generó una excepción: {exc}", file=sys.stderr)
                     if progress_callback:
                         progress_callback(paginas_procesadas, total_paginas)
 
@@ -1007,7 +1098,7 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
         print("==================================================")
         try:
             from thesis_reviewer import ThesisReviewPipeline
-            pipeline = ThesisReviewPipeline(agy_command="agy")
+            pipeline = ThesisReviewPipeline(agy_command="agy", model=cli_model)
             temp_meth_output = output_path + ".meth_tmp.pdf"
             
             # Ejecutar auditoría sobre el PDF con anotaciones previas
