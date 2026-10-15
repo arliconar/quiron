@@ -79,6 +79,8 @@ class QuironGUI:
         self.mode_var = ctk.StringVar(value="cli") # 'cli' o 'api'
         self.agent_var = ctk.StringVar(value="Antigravity")
         self.cli_model_var = ctk.StringVar(value="gemini-3.8-flash-low")
+        self.skip_first_pages_var = ctk.BooleanVar(value=False)
+        self.num_skip_pages_var = ctk.StringVar(value="10")
         
         self.api_llm_var = ctk.StringVar(value="ChatGPT")
         self.api_model_var = ctk.StringVar(value="gpt-4o-mini")
@@ -144,12 +146,63 @@ class QuironGUI:
         keys = self.config_data.get("api_keys", {})
         self.api_key_var.set(keys.get(llm, ""))
         
-        # Actualizar modelos disponibles
-        models = MODELS_JSON.get(llm, [])
+        # Actualizar modelos disponibles (por defecto de diccionario)
+        models = list(MODELS_JSON.get(llm, []))
         if hasattr(self, 'api_model_combo'):
             self.api_model_combo.configure(values=models)
             if models and not self.api_model_var.get():
                 self.api_model_var.set(models[0])
+
+        # Consultar modelos actualizados directamente a la API en segundo plano
+        key = self.api_key_var.get().strip()
+        if key:
+            threading.Thread(target=self.fetch_remote_models, args=(llm, key), daemon=True).start()
+
+    def trigger_remote_models_update(self):
+        llm = self.api_llm_var.get()
+        key = self.api_key_var.get().strip()
+        if key:
+            threading.Thread(target=self.fetch_remote_models, args=(llm, key), daemon=True).start()
+
+    def fetch_remote_models(self, llm: str, api_key: str):
+        """Consulta en vivo a la API oficial la lista de modelos compatibles."""
+        try:
+            import requests
+            remote_models = []
+            if llm == "Gemini":
+                url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+                r = requests.get(url, timeout=5)
+                if r.status_code == 200:
+                    data = r.json()
+                    for m in data.get("models", []):
+                        methods = m.get("supportedGenerationMethods", [])
+                        if "generateContent" in methods:
+                            name = m.get("name", "").replace("models/", "")
+                            if any(x in name for x in ["flash", "pro", "gemma", "argon"]):
+                                remote_models.append(name)
+            elif llm == "ChatGPT":
+                url = "https://api.openai.com/v1/models"
+                headers = {"Authorization": f"Bearer {api_key}"}
+                r = requests.get(url, headers=headers, timeout=5)
+                if r.status_code == 200:
+                    data = r.json()
+                    valid_prefixes = ("gpt-4", "gpt-3.5", "o1", "o3", "chatgpt")
+                    for m in data.get("data", []):
+                        mid = m.get("id", "")
+                        if any(mid.startswith(p) for p in valid_prefixes):
+                            remote_models.append(mid)
+                    remote_models.sort()
+
+            if remote_models:
+                def _update_combo():
+                    if hasattr(self, 'api_model_combo') and self.api_llm_var.get() == llm:
+                        self.api_model_combo.configure(values=remote_models)
+                        current_sel = self.api_model_var.get()
+                        if current_sel not in remote_models and remote_models:
+                            self.api_model_var.set(remote_models[0])
+                self.root.after(0, _update_combo)
+        except Exception:
+            pass
 
     def create_widgets(self):
         # Frame principal
@@ -245,6 +298,8 @@ class QuironGUI:
         ctk.CTkLabel(self.api_frame, text="API Key:").grid(row=2, column=0, sticky=tk.W, pady=5)
         self.api_key_entry = ctk.CTkEntry(self.api_frame, textvariable=self.api_key_var, show="*", width=250)
         self.api_key_entry.grid(row=2, column=1, sticky=tk.W, padx=10)
+        self.api_key_entry.bind("<FocusOut>", lambda e: self.trigger_remote_models_update())
+        self.api_key_entry.bind("<Return>", lambda e: self.trigger_remote_models_update())
         
         self.api_llm_var.trace_add('write', self.update_api_key_from_config)
         self.update_api_key_from_config()
@@ -253,8 +308,17 @@ class QuironGUI:
         self.cli_frame.grid(row=4, column=0, columnspan=2, sticky=tk.W, padx=10, pady=5)
         self.api_frame.grid(row=5, column=0, columnspan=2, sticky=tk.W, padx=10, pady=5)
         
+        # Omitir páginas iniciales
+        skip_frame = ctk.CTkFrame(options_frame, fg_color="transparent")
+        skip_frame.grid(row=6, column=0, columnspan=2, sticky=tk.W, padx=10, pady=5)
+        self.skip_cb = ctk.CTkCheckBox(skip_frame, text="Cortar/Omitir primeras páginas (desde la 1 hasta la:", variable=self.skip_first_pages_var, command=self.toggle_skip_pages)
+        self.skip_cb.pack(side=tk.LEFT, padx=(0, 5))
+        self.skip_entry = ctk.CTkEntry(skip_frame, textvariable=self.num_skip_pages_var, width=60, state='disabled')
+        self.skip_entry.pack(side=tk.LEFT, padx=(0, 5))
+        ctk.CTkLabel(skip_frame, text=")").pack(side=tk.LEFT)
+
         # Sobrescribir
-        ctk.CTkCheckBox(options_frame, text="Sobrescribir archivo original", variable=self.overwrite_var).grid(row=6, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(5, 10))
+        ctk.CTkCheckBox(options_frame, text="Sobrescribir archivo original", variable=self.overwrite_var).grid(row=7, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(5, 10))
         
         # --- Sección 3: Acciones ---
         action_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
@@ -306,6 +370,12 @@ class QuironGUI:
             self.cli_frame.grid_remove()
             self.api_frame.grid(row=5, column=0, columnspan=2, sticky=tk.W, padx=10, pady=5)
             self.terminal_button.pack_forget()
+
+    def toggle_skip_pages(self):
+        if self.skip_first_pages_var.get():
+            self.skip_entry.configure(state='normal')
+        else:
+            self.skip_entry.configure(state='disabled')
 
     def browse_file(self):
         file_path = filedialog.askopenfilename(
@@ -451,9 +521,9 @@ class QuironGUI:
                 self.progress_label.configure(text="0/0 páginas (0.0%)")
         self.root.after(0, _update)
 
-    def run_correction_thread(self, input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, do_spelling, do_methodology, do_guide, guide_path, cli_model=""):
+    def run_correction_thread(self, input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, do_spelling, do_methodology, do_guide, guide_path, cli_model="", skip_first_pages=0):
         try:
-            corregir_reporte_pdf(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, do_spelling=do_spelling, do_methodology=do_methodology, do_guide=do_guide, guide_path=guide_path, cli_model=cli_model, stop_event=self.stop_event, progress_callback=self.update_gui_progress)
+            corregir_reporte_pdf(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, do_spelling=do_spelling, do_methodology=do_methodology, do_guide=do_guide, guide_path=guide_path, cli_model=cli_model, skip_first_pages=skip_first_pages, stop_event=self.stop_event, progress_callback=self.update_gui_progress)
             if self.stop_event.is_set():
                 self.msg_queue.put("\n>>> PROCESO DETENIDO POR EL USUARIO <<<\n")
             else:
@@ -541,6 +611,16 @@ class QuironGUI:
         do_methodology = self.do_methodology_var.get()
         do_guide = self.do_guide_var.get()
         
+        skip_first_pages = 0
+        if self.skip_first_pages_var.get():
+            try:
+                skip_first_pages = max(0, int(self.num_skip_pages_var.get().strip()))
+            except ValueError:
+                skip_first_pages = 0
+        
+        if skip_first_pages > 0:
+            self.msg_queue.put(f"Omitiendo las primeras {skip_first_pages} páginas (desde la 1 hasta la {skip_first_pages})...\n")
+
         if not do_spelling and not do_methodology and not do_guide:
             self.msg_queue.put("No se seleccionó ninguna tarea a realizar.\n")
             self.run_button.configure(state=tk.NORMAL)
@@ -552,7 +632,7 @@ class QuironGUI:
             do_guide = False
             
         # Lanzar el hilo
-        thread = threading.Thread(target=self.run_correction_thread, args=(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, do_spelling, do_methodology, do_guide, guide_path, cli_model))
+        thread = threading.Thread(target=self.run_correction_thread, args=(input_path, output_path, num_agents, agent_name, mode, api_llm, api_model, do_spelling, do_methodology, do_guide, guide_path, cli_model, skip_first_pages))
         thread.daemon = True
         thread.start()
 

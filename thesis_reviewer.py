@@ -104,20 +104,6 @@ class TextBlockMetadata:
 
 
 @dataclass
-class ImageBlockMetadata:
-    """Metadatos espaciales y ruta de imagen extraída/rasterizada."""
-    target_id: str
-    page: int  # Base 1
-    image_idx: int  # Base 0 por página
-    bbox: Tuple[float, float, float, float]  # [x0, y0, x1, y2]
-    image_path: str
-    caption: str = ""
-
-    def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass
 class Section:
     """Segmento semántico canónico delimitado espacialmente."""
     canonical_name: str
@@ -126,33 +112,22 @@ class Section:
     start_y0: float
     blocks: List[TextBlockMetadata] = field(default_factory=list)
     overlap_blocks: List[TextBlockMetadata] = field(default_factory=list)
-    images: List[ImageBlockMetadata] = field(default_factory=list)
 
     @property
     def full_text(self) -> str:
         """Texto propio de la sección con formato [P{page}-B{block_idx}] {texto}."""
         lines = [f"[{b.target_id}] {b.text}" for b in self.blocks]
-        if self.images:
-            lines.append("\n--- FIGURAS / IMÁGENES ASOCIADAS A ESTE CAPÍTULO ---")
-            for img in self.images:
-                cap_txt = f" (Leyenda: '{img.caption}')" if img.caption else ""
-                lines.append(f"[{img.target_id}] [FIGURA/IMAGEN Pág {img.page}]{cap_txt} Archivo: {img.image_path}")
         return "\n".join(lines)
 
     @property
     def context_text(self) -> str:
-        """Texto con overlap contextual previo + contenido de la sección e imágenes."""
+        """Texto con overlap contextual previo + contenido de la sección."""
         chunks: List[str] = []
         if self.overlap_blocks:
             chunks.append("--- CONTEXTO PREVIO (SOLAPAMIENTO DE LA SECCIÓN ANTERIOR) ---")
             chunks.extend(f"[{b.target_id}] {b.text}" for b in self.overlap_blocks)
             chunks.append("--- INICIO SECCIÓN AUDITADA ---")
         chunks.extend(f"[{b.target_id}] {b.text}" for b in self.blocks)
-        if self.images:
-            chunks.append("\n--- FIGURAS / IMÁGENES ASOCIADAS A ESTE CAPÍTULO ---")
-            for img in self.images:
-                cap_txt = f" (Leyenda: '{img.caption}')" if img.caption else ""
-                chunks.append(f"[{img.target_id}] [FIGURA/IMAGEN Pág {img.page}]{cap_txt} Archivo: {img.image_path}")
         return "\n".join(chunks)
 
 
@@ -273,15 +248,12 @@ class AgyClient:
 {system_prompt}
 
 [REGLAS ESTRICTAS DE SALIDA]
-1. Audita el texto e imágenes proporcionados respetando los identificadores de bloque:
-   - Bloques de texto: [P{{pagina}}-B{{bloque}}]
-   - Bloques de figuras/imágenes: [P{{pagina}}-IMG{{indice}}]
-2. Si un problema reside en una figura/imagen (gráfica errónea, falta de unidades en ejes, diagrama incompleto, discrepancia visual con el texto), utiliza el target_id de la imagen (ej. P17-IMG0), la página correspondiente y en 'quote' la leyenda/título de la figura o el archivo.
-3. Para cada problema detectado, extrae el target_id exacto (ej. P1-B0 o P17-IMG0), el número de página como entero, y la quote textual idéntica a como aparece en el texto o pie de figura.
-4. El campo 'category' DEBE ser estrictamente "{category}".
-5. El campo 'reviewer_name' DEBE ser estrictamente "{reviewer_name}".
-6. El campo 'severity' debe ser uno de: "sugerencia", "observacion", "critica".
-7. IMPORTANTE: Devuelve ÚNICAMENTE un array JSON válido sin texto previo ni posterior, siguiendo este esquema:
+1. Audita el texto proporcionado respetando los identificadores de bloque: [P{pagina}-B{bloque}].
+2. Para cada problema detectado, extrae el target_id exacto (ej. P1-B0), el número de página como entero, y la quote textual idéntica a como aparece en el texto.
+3. El campo 'category' DEBE ser estrictamente "{category}".
+4. El campo 'reviewer_name' DEBE ser estrictamente "{reviewer_name}".
+5. El campo 'severity' debe ser uno de: "sugerencia", "observacion", "critica".
+6. IMPORTANTE: Devuelve ÚNICAMENTE un array JSON válido sin texto previo ni posterior, siguiendo este esquema:
 {json_schema_desc}
 Si no encuentras ningún problema, devuelve exactamente un array vacío: []
 """
@@ -289,7 +261,7 @@ Si no encuentras ningún problema, devuelve exactamente un array vacío: []
         if context_text and context_text.strip():
             full_prompt += f"\n[CONTEXTO DE REFERENCIA (Capítulos o secciones previas)]\n{context_text.strip()}\n"
 
-        full_prompt += f"\n[TEXTO E IMÁGENES A AUDITAR]\n{audited_text.strip()}\n"
+        full_prompt += f"\n[TEXTO A AUDITAR]\n{audited_text.strip()}\n"
 
         raw_output = self.query(full_prompt)
         return self._parse_comments(raw_output, default_reviewer=reviewer_name, default_category=category)
@@ -371,14 +343,13 @@ class PdfStructuredExtractor:
         self.bold_ratio_threshold = bold_ratio_threshold
 
     def extract(
-        self, pdf_path: str | Path, images_output_dir: Optional[str | Path] = None
-    ) -> Tuple[str, Dict[str, Dict[str, Any]], List[TextBlockMetadata], List[ImageBlockMetadata]]:
+        self, pdf_path: str | Path
+    ) -> Tuple[str, Dict[str, Dict[str, Any]], List[TextBlockMetadata]]:
         """
         Genera:
         1. String etiquetado: [P{page}-B{block_idx}] {texto}
         2. metadata_index: Diccionario para mapeo inverso {target_id: {...}}
         3. text_blocks: Lista secuencial de objetos TextBlockMetadata
-        4. image_blocks: Lista secuencial de objetos ImageBlockMetadata con archivos PNG renderizados
         """
         if fitz is None:
             raise ImportError("PyMuPDF (fitz) es requerido pero no está instalado.")
@@ -387,18 +358,11 @@ class PdfStructuredExtractor:
         if not pdf_file.exists():
             raise FileNotFoundError(f"Archivo no encontrado: {pdf_file}")
 
-        if images_output_dir is None:
-            img_dir = pdf_file.parent / ".quiron_thesis_images"
-        else:
-            img_dir = Path(images_output_dir)
-        img_dir.mkdir(parents=True, exist_ok=True)
-
         doc = fitz.open(pdf_file)
         total_pages = len(doc)
         labeled_lines: List[str] = []
         metadata_index: Dict[str, Dict[str, Any]] = {}
         all_blocks: List[TextBlockMetadata] = []
-        all_images: List[ImageBlockMetadata] = []
 
         try:
             for page_index in range(total_pages):
@@ -408,9 +372,8 @@ class PdfStructuredExtractor:
 
                 raw_blocks = page_dict.get("blocks", [])
                 text_block_idx = 0
-                page_text_blocks: List[TextBlockMetadata] = []
 
-                # 1. Extraer bloques de texto
+                # Extraer bloques de texto
                 for raw_block in raw_blocks:
                     if raw_block.get("type", 0) != 0:
                         continue
@@ -467,84 +430,21 @@ class PdfStructuredExtractor:
                     )
 
                     all_blocks.append(block_meta)
-                    page_text_blocks.append(block_meta)
                     metadata_index[target_id] = block_meta.to_dict()
                     labeled_lines.append(f"[{target_id}] {clean_text}")
 
                     text_block_idx += 1
-
-                # 2. Extraer imágenes/figuras de la página
-                page_imgs = page.get_images()
-                img_idx = 0
-                for img_info in page_imgs:
-                    xref = img_info[0]
-                    rects = page.get_image_rects(xref)
-                    if not rects:
-                        continue
-                    for rect in rects:
-                        # Filtrar miniaturas o elementos decorativos muy pequeños (< 40x40 pt)
-                        if rect.width < 40 or rect.height < 40:
-                            continue
-
-                        img_target_id = f"P{page_num}-IMG{img_idx}"
-                        img_filename = f"page_{page_num}_img_{img_idx}.png"
-                        img_path = img_dir / img_filename
-
-                        # Renderizar recorte de la imagen a alta resolución
-                        try:
-                            # Renderizar la región exacta
-                            pix = page.get_pixmap(clip=rect, dpi=150)
-                            pix.save(str(img_path))
-                        except Exception:
-                            # Fallback: extraer stream directo
-                            try:
-                                base_image = doc.extract_image(xref)
-                                image_bytes = base_image["image"]
-                                with open(img_path, "wb") as f_out:
-                                    f_out.write(image_bytes)
-                            except Exception as ex:
-                                logger.warning("No se pudo extraer imagen xref %d: %s", xref, ex)
-                                continue
-
-                        # Buscar pie de figura más cercano debajo de la imagen (y0 > rect.y1)
-                        caption = ""
-                        candidate_captions = [
-                            b for b in page_text_blocks
-                            if b.bbox[1] >= (rect.y1 - 10) and b.bbox[1] <= (rect.y1 + 100)
-                        ]
-                        for cand in candidate_captions:
-                            if re.search(r"^\s*(?:figura|fig\.|gr[aá]fica|diagrama)\s*\d+", cand.text, re.I):
-                                caption = cand.text
-                                break
-                        if not caption and candidate_captions:
-                            # Usar el texto inmediato siguiente si es breve (< 120 caracteres)
-                            first_cand = candidate_captions[0]
-                            if len(first_cand.text) <= 120:
-                                caption = first_cand.text
-
-                        img_meta = ImageBlockMetadata(
-                            target_id=img_target_id,
-                            page=page_num,
-                            image_idx=img_idx,
-                            bbox=(rect.x0, rect.y0, rect.x1, rect.y1),
-                            image_path=str(img_path.resolve()),
-                            caption=caption
-                        )
-                        all_images.append(img_meta)
-                        metadata_index[img_target_id] = img_meta.to_dict()
-                        img_idx += 1
 
         finally:
             doc.close()
 
         labeled_text = "\n".join(labeled_lines)
         logger.info(
-            "Extracción finalizada: %d páginas analizadas, %d bloques procesados, %d imágenes guardadas.",
+            "Extracción finalizada: %d páginas analizadas, %d bloques procesados.",
             total_pages,
-            len(all_blocks),
-            len(all_images)
+            len(all_blocks)
         )
-        return labeled_text, metadata_index, all_blocks, all_images
+        return labeled_text, metadata_index, all_blocks
 
 
 # ============================================================================
@@ -586,17 +486,15 @@ class SectionSplitter:
         return "Metodología"  # Los capítulos de desarrollo técnico caen naturalmente aquí
 
     def split(
-        self, blocks: List[TextBlockMetadata], images: Optional[List[ImageBlockMetadata]] = None
+        self, blocks: List[TextBlockMetadata]
     ) -> List[Section]:
         """
         Segmenta secuencialmente todos los capítulos del documento y asocia
-        los bloques de texto e imágenes/figuras correspondientes a cada uno.
+        los bloques de texto correspondientes a cada uno.
         Retorna la lista ordenada de capítulos detectados.
         """
         if not blocks:
             return []
-
-        images_list = images or []
 
         body_sizes = [b.avg_font_size for b in blocks if not b.is_heading_candidate]
         body_font_base = (sum(body_sizes) / len(body_sizes)) if body_sizes else 11.0
@@ -640,7 +538,6 @@ class SectionSplitter:
                 start_page=blocks[0].page,
                 start_y0=blocks[0].bbox[1],
                 blocks=blocks,
-                images=images_list,
             )
             return [fallback]
 
@@ -654,24 +551,6 @@ class SectionSplitter:
                 overlap_start = max(0, start_idx - self.overlap_count)
                 overlap = blocks[overlap_start:start_idx]
 
-            # Determinar rango de páginas de este capítulo
-            start_p = heading_block.page
-            if h_idx + 1 < len(detected_headings):
-                end_p = detected_headings[h_idx + 1][3].page
-                # Imágenes pertenecientes a las páginas de este capítulo
-                section_imgs = [
-                    img for img in images_list
-                    if (img.page > start_p and img.page < end_p)
-                    or (img.page == start_p and img.bbox[1] >= heading_block.bbox[1])
-                    or (img.page == end_p and img.bbox[1] < detected_headings[h_idx + 1][3].bbox[1])
-                ]
-            else:
-                section_imgs = [
-                    img for img in images_list
-                    if (img.page > start_p)
-                    or (img.page == start_p and img.bbox[1] >= heading_block.bbox[1])
-                ]
-
             sections.append(Section(
                 canonical_name=canonical_name,
                 heading_title=heading_title,
@@ -679,7 +558,6 @@ class SectionSplitter:
                 start_y0=heading_block.bbox[1],
                 blocks=section_blocks,
                 overlap_blocks=overlap,
-                images=section_imgs,
             ))
 
         return sections
@@ -1122,18 +1000,23 @@ class ThesisReviewPipeline:
     def run(
         self,
         input_pdf: str | Path,
-        output_pdf: str | Path = "tesis_revisada_con_comentarios.pdf"
+        output_pdf: str | Path = "tesis_revisada_con_comentarios.pdf",
+        skip_first_pages: int = 0
     ) -> Tuple[Path, List[ReviewComment]]:
         logger.info(">>> Iniciando Pipeline de Auditoría de Tesis con antigravity-cli ('agy')...")
 
-        # 1. Extracción Estructurada de Texto e Imágenes/Figuras
-        labeled_text, metadata_index, blocks, images = self.extractor.extract(input_pdf)
+        # 1. Extracción Estructurada de Texto
+        labeled_text, metadata_index, blocks = self.extractor.extract(input_pdf)
 
-        # 2. Segmentación Semántica Híbrida (Capítulos Reales con Imágenes Asociadas)
-        sections = self.splitter.split(blocks, images=images)
+        if skip_first_pages > 0:
+            logger.info("Omitiendo las primeras %d páginas en la revisión metodológica.", skip_first_pages)
+            blocks = [b for b in blocks if b.page > skip_first_pages]
+
+        # 2. Segmentación Semántica Híbrida (Capítulos Reales)
+        sections = self.splitter.split(blocks)
         logger.info(
-            "Capítulos detectados: %d | Bloques de texto: %d | Figuras/imágenes extraídas: %d",
-            len(sections), len(blocks), len(images)
+            "Capítulos detectados: %d | Bloques de texto: %d",
+            len(sections), len(blocks)
         )
 
         all_comments: List[ReviewComment] = []

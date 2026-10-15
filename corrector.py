@@ -905,7 +905,7 @@ def crear_barra_progreso(actual: int, total: int, ancho: int = 20) -> str:
     barra = "█" * llenos + "░" * (ancho - llenos)
     return f"[{barra}] {actual}/{total} páginas ({porcentaje:.1f}%)"
 
-def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10, agent_name: str = "Antigravity", mode: str = "cli", api_llm: str = "", api_model: str = "", do_spelling: bool = True, do_methodology: bool = True, do_guide: bool = False, guide_path: str = "", cli_model: str = "", stop_event=None, progress_callback=None):
+def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10, agent_name: str = "Antigravity", mode: str = "cli", api_llm: str = "", api_model: str = "", do_spelling: bool = True, do_methodology: bool = True, do_guide: bool = False, guide_path: str = "", cli_model: str = "", skip_first_pages: int = 0, stop_event=None, progress_callback=None):
     """
     Abre el PDF de entrada, analiza errores ortográficos y/o metodología de tesis,
     agrega anotaciones al PDF y guarda el resultado.
@@ -921,6 +921,8 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
     print("\n==================================================")
     print("INICIANDO PROCESO DE CORRECCIÓN DE DOCUMENTO")
     print(f"Total de páginas a procesar: {total_paginas}")
+    if skip_first_pages > 0:
+        print(f"Páginas iniciales omitidas (portada/índice/agradecimientos): 1 a {skip_first_pages}")
     print(f"Progreso inicial: {crear_barra_progreso(0, total_paginas)}")
     print("==================================================\n")
     
@@ -934,11 +936,14 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
     all_pages_text_list = extract_all_pages_text(input_path, doc)
     all_pages_text = []
     for page_num, page_text in enumerate(all_pages_text_list):
+        if page_num < skip_first_pages:
+            continue
         if page_text:
             all_pages_text.append(f"--- PÁGINA {page_num + 1} ---\n{page_text}")
     full_text = "\n\n".join(all_pages_text)
     
     if do_spelling:
+        page_errors = {}
         # Agrupar páginas en lotes (chunks) para reducir llamadas al LLM hasta un 80%
         # Lotes de hasta 4 páginas o 12,000 caracteres
         PAGE_BATCH_SIZE = 4
@@ -946,6 +951,8 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
         current_batch = []
         current_chars = 0
         for p_idx in range(total_paginas):
+            if p_idx < skip_first_pages:
+                continue
             p_txt = all_pages_text_list[p_idx] if p_idx < len(all_pages_text_list) else ""
             if not p_txt.strip():
                 continue
@@ -1102,7 +1109,7 @@ def corregir_reporte_pdf(input_path: str, output_path: str, num_agents: int = 10
             temp_meth_output = output_path + ".meth_tmp.pdf"
             
             # Ejecutar auditoría sobre el PDF con anotaciones previas
-            pipeline.run(input_pdf=temp_intermediate_path, output_pdf=temp_meth_output)
+            pipeline.run(input_pdf=temp_intermediate_path, output_pdf=temp_meth_output, skip_first_pages=skip_first_pages)
             
             # Reemplazar el archivo intermedio por el que tiene las anotaciones metodológicas
             if os.path.exists(temp_intermediate_path):
